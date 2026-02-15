@@ -1,6 +1,6 @@
 # Agentic Dev Sandbox
 
-A straightfoward, but opinionated, sandboxed development environment for agentic LLMs. The agent gets full autonomy
+A straightforward, but opinionated, sandboxed development environment for agentic LLMs. The agent gets full autonomy
 inside of a container, but is isolated from any user data, credential or private network outside of what it is explicitly given. 
 
 *As it should be.*
@@ -45,7 +45,7 @@ To generate the Github PAT:
 
 ```bash
 # 1. Clone and configure
-git clone https://github.com/you/agentic-dev-sandbox.git
+git clone https://github.com/joaopn/agentic-dev-sandbox.git
 cd agentic-dev-sandbox
 
 cp .env.example .env
