@@ -1,0 +1,69 @@
+services:
+  gitea:
+    image: gitea/gitea:latest
+    container_name: sandbox-gitea
+    environment:
+      - GITEA__server__ROOT_URL=http://localhost:${GITEA_PORT:-3000}
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__service__DISABLE_REGISTRATION=true
+      - GITEA__service__REQUIRE_SIGNIN_VIEW=false
+      - GITEA__mirror__ENABLED=true
+      - GITEA__mirror__DEFAULT_INTERVAL=${MIRROR_INTERVAL:-8h}
+      - GITEA__repository__DEFAULT_BRANCH=main
+      # Disable features we don't need
+      - GITEA__openid__ENABLE_OPENID_SIGNIN=false
+      - GITEA__openid__ENABLE_OPENID_SIGNUP=false
+    volumes:
+      - gitea-data:/data
+    ports:
+      - "${GITEA_PORT:-3000}:3000"
+    networks:
+      - dev-sandbox
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  review:
+    build: ./review
+    container_name: sandbox-review
+    environment:
+      - REVIEWER_PROVIDER=${REVIEWER_PROVIDER:-anthropic}
+      - REVIEWER_API_KEY=${REVIEWER_API_KEY}
+      - REVIEWER_MODEL=${REVIEWER_MODEL:-}
+      - REVIEWER_ENDPOINT=${REVIEWER_ENDPOINT:-}
+      - GITEA_URL=http://sandbox-gitea:3000
+      - GITEA_ADMIN_TOKEN=${GITEA_ADMIN_TOKEN}
+    networks:
+      - dev-sandbox
+    depends_on:
+      gitea:
+        condition: service_healthy
+    restart: unless-stopped
+
+  proxy:
+    build: ./proxy
+    container_name: sandbox-proxy
+    networks:
+      - dev-sandbox
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "squid", "-k", "check", "-f", "/etc/squid/squid.conf"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  gitea-data:
+
+networks:
+  # Infrastructure network: has internet access.
+  # Agent networks are created per-project by sandbox.py (internal, no gateway).
+  dev-sandbox:
+    name: dev-sandbox
+    driver: bridge
