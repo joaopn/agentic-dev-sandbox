@@ -627,18 +627,6 @@ def cmd_create(args: argparse.Namespace) -> None:
     ssh_pass = gen_password()
     memory = args.memory or cfg.default_memory
 
-    # Inject user's SSH public keys into the volume
-    ssh_dir = Path.home() / ".ssh"
-    if ssh_dir.is_dir():
-        keys = []
-        for pub in ssh_dir.glob("*.pub"):
-            keys.append(pub.read_text())
-        if keys:
-            key_data = "".join(keys).replace("\n", "\\n")
-            run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
-                        "sh", "-c",
-                        f"mkdir -p /home/agent/.ssh && printf '{key_data}' > /home/agent/.ssh/authorized_keys"])
-
     docker_args = build_agent_docker_args(
         container_name=container_name, project=project, network=agent_network,
         volume_name=volume_name, ssh_port=ssh_port, agent_token=agent_token,
@@ -672,6 +660,39 @@ def cmd_attach(args: argparse.Namespace) -> None:
         die(f"Container {container} is not running. Run: sandbox start {args.project}")
     print(f"Attaching to {args.project} byobu session (F6 to detach)...")
     os.execvp("docker", ["docker", "exec", "-it", container, "byobu", "attach", "-t", "main"])
+
+
+def cmd_ssh(args: argparse.Namespace) -> None:
+    containers = get_agent_containers()
+    if not containers:
+        die("No sandbox agent containers found.")
+    for name in containers:
+        project = name.removeprefix("sandbox-agent-")
+        r = subprocess.run(
+            ["docker", "inspect", "-f",
+             "{{.State.Status}}\t"
+             "{{range .Config.Env}}{{println .}}{{end}}", name],
+            capture_output=True, text=True,
+        )
+        lines = r.stdout.strip().split("\t", 1)
+        state = lines[0] if lines else "?"
+        ssh_pass = ""
+        if len(lines) > 1:
+            for line in lines[1].splitlines():
+                if line.startswith("SSH_PASSWORD="):
+                    ssh_pass = line.split("=", 1)[1]
+                    break
+        r = subprocess.run(
+            ["docker", "inspect", "-f",
+             "{{range $p, $binds := .HostConfig.PortBindings}}"
+             "{{range $binds}}{{.HostPort}}{{end}}{{end}}", name],
+            capture_output=True, text=True,
+        )
+        ssh_port = r.stdout.strip() or "-"
+        print(f"{project}  ({state})")
+        print(f"  ssh agent@localhost -p {ssh_port}")
+        print(f"  password: {ssh_pass}")
+        print()
 
 
 def cmd_stop(args: argparse.Namespace) -> None:
@@ -1049,9 +1070,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("github_url", metavar="github-url")
     p.set_defaults(func=cmd_create)
 
-    p = sub.add_parser("attach", help="Attach to agent's tmux session")
+    p = sub.add_parser("attach", help="Attach to agent's byobu session")
     p.add_argument("project")
     p.set_defaults(func=cmd_attach)
+
+    sub.add_parser("ssh", help="Show SSH connection info for all containers").set_defaults(func=cmd_ssh)
 
     for name, help_text in [("stop", "Stop"), ("start", "Start"),
                             ("pause", "Freeze"), ("unpause", "Resume")]:

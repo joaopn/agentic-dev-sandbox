@@ -90,6 +90,7 @@ Commands:
   setup                          One-time infrastructure setup
   create <github-url> [opts]     Mirror repo, spin up agent container
   attach <project>               Attach to agent's byobu session
+  ssh                            Show SSH connection info (ports + passwords)
   stop <project|--all>           Stop agent container(s)
   start <project|--all>          Start stopped container(s)
   pause <project|--all>          Freeze container(s) in place (cgroup)
@@ -115,12 +116,14 @@ Create/recreate options:
 
 Connect to agent containers via VS Code Remote-SSH for full IDE access:
 
-```
+```bash
+sandbox ssh   # shows port + password for all containers
 ssh agent@localhost -p <ssh-port>
 ```
 
-The SSH port is printed by `sandbox status`. Once connected, run `byobu attach`
-in the VS Code terminal to connect to the agent session.
+Once connected, run `byobu attach` in the VS Code terminal to connect to the
+agent session. Displaying the password is not a security issue, as anyone with docker permissions
+can already connect directly to the agent container.
 
 **Important**: Verify these VS Code settings are disabled before connecting:
 - `remote.SSH.enableAgentForwarding` — must be off (forwards host SSH keys)
@@ -217,7 +220,8 @@ agentic-dev-sandbox/
 ### `container/` directory
 
 Any files placed in `container/` are copied into each agent's home directory volume at `/home/agent/`.
-Use this to provide SSH authentication (in a `.ssh/` subfolder), config files, or custom instructions to every agent. 
+Use this to provide config files or custom instructions to every agent. For key-based SSH access,
+place your public key at `container/.ssh/authorized_keys`.
 By default it ships with a `CLAUDE.md` containing baseline agent instructions.
 
 

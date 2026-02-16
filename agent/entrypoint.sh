@@ -24,7 +24,7 @@ if [[ -n "${SSH_PASSWORD:-}" ]]; then
     echo "agent:${SSH_PASSWORD}" | sudo chpasswd
 fi
 
-# Fix permissions on authorized keys injected by sandbox.py
+# Fix permissions on authorized keys if provided via container/
 if [[ -f ~/.ssh/authorized_keys ]]; then
     chmod 700 ~/.ssh
     chmod 600 ~/.ssh/authorized_keys
