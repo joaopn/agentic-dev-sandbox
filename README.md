@@ -112,6 +112,50 @@ Create/recreate options:
   --ssh-port <port>              Host port for SSH (default: auto-assigned)
 ```
 
+## File Structure
+
+```
+agentic-dev-sandbox/
+├── sandbox.py                    Main CLI (Python 3, stdlib only)
+├── docker-compose.yml            Gitea + review service + router
+├── .env                          Config + secrets (gitignored)
+├── .env.example                  Template
+├── container/                    Files copied into each agent workspace
+│   └── CLAUDE.md                 Default agent instructions
+├── agent/
+│   ├── Dockerfile.python         Agent image: conda, git, byobu, sshd
+│   └── entrypoint.sh            Clone, configure git, start sshd + byobu (shared)
+├── review/
+│   ├── Dockerfile                Review service image
+│   ├── review-server.py          Webhook listener: diff → LLM review → comment
+│   └── review-config.yaml        Prompt, provider endpoints, tunables
+└── router/
+    ├── Dockerfile                NAT router image (Alpine + iptables)
+    └── scripts/
+        ├── entrypoint.sh         NAT, firewall setup
+        ├── apply-rules.sh        Per-network iptables rules (idempotent)
+        └── remove-rules.sh       Cleanup rules for a subnet
+```
+
+### `container/` directory
+
+Any files placed in `container/` are copied into each agent's home directory volume at `/home/agent/`.
+Use this to provide config files or custom instructions to every agent. For key-based SSH access,
+place your public key at `container/.ssh/authorized_keys`.
+By default it ships with a `CLAUDE.md` containing baseline agent instructions.
+
+### Git remotes inside the container
+
+Each agent container has two git remotes:
+- **`origin`** — the agent's fork on Gitea (read-write)
+- **`upstream`** — the mirror of the GitHub repo (read-only)
+
+After you merge the agent's work on GitHub and the mirror syncs, the agent must
+`git fetch upstream && git merge upstream/main` before starting new work. This is
+**not done automatically** — it is up to the agent (or the user) to sync. The default
+`CLAUDE.md` instructs Claude Code to do this before each task.
+
+
 ## VS Code Remote-SSH
 
 Connect to agent containers via VS Code Remote-SSH for full IDE access:
@@ -146,6 +190,8 @@ To add a custom profile, create `agent/Dockerfile.myprofile`. It must set up a n
 `agent` user (UID 1000) with passwordless sudo, an SSH server, and `/home/agent` as the
 working directory. Copy an existing Dockerfile as a starting point. The entrypoint is always
 `agent/entrypoint.sh`.
+
+
 
 ## Reviewer Configuration
 
@@ -191,39 +237,6 @@ and no webhooks are created on agent repos.
 **Customizing the review prompt:** Edit `review/review-config.yaml`. The prompt
 must contain a `{diff}` placeholder. Rebuild the review container after changes:
 `docker compose build review && docker compose up -d review`.
-
-## File Structure
-
-```
-agentic-dev-sandbox/
-├── sandbox.py                    Main CLI (Python 3, stdlib only)
-├── docker-compose.yml            Gitea + review service + router
-├── .env                          Config + secrets (gitignored)
-├── .env.example                  Template
-├── container/                    Files copied into each agent workspace
-│   └── CLAUDE.md                 Default agent instructions
-├── agent/
-│   ├── Dockerfile.python         Agent image: conda, git, byobu, sshd
-│   └── entrypoint.sh            Clone, configure git, start sshd + byobu (shared)
-├── review/
-│   ├── Dockerfile                Review service image
-│   ├── review-server.py          Webhook listener: diff → LLM review → comment
-│   └── review-config.yaml        Prompt, provider endpoints, tunables
-└── router/
-    ├── Dockerfile                NAT router image (Alpine + iptables)
-    └── scripts/
-        ├── entrypoint.sh         NAT, firewall setup
-        ├── apply-rules.sh        Per-network iptables rules (idempotent)
-        └── remove-rules.sh       Cleanup rules for a subnet
-```
-
-### `container/` directory
-
-Any files placed in `container/` are copied into each agent's home directory volume at `/home/agent/`.
-Use this to provide config files or custom instructions to every agent. For key-based SSH access,
-place your public key at `container/.ssh/authorized_keys`.
-By default it ships with a `CLAUDE.md` containing baseline agent instructions.
-
 
 ## Network Isolation
 

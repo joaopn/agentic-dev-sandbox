@@ -530,7 +530,7 @@ def cmd_create(args: argparse.Namespace) -> None:
             "password": user_pass,
             "email": f"{gitea_user}@sandbox.local",
             "must_change_password": False,
-            "visibility": "private",
+            "visibility": "public",
         })
     else:
         # User exists (re-run after partial failure) — reset password so we can auth
@@ -549,6 +549,10 @@ def cmd_create(args: argparse.Namespace) -> None:
         except (HTTPError, URLError) as e:
             die(f"Failed to fork repo to {gitea_user}: {e}")
         time.sleep(2)
+
+    # Grant admin read access to the agent fork (for browsing in Gitea webui)
+    gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-admin",
+                 {"permission": "read"})
 
     # 3. Generate fresh Gitea token
     print(f"Generating Gitea token for {gitea_user}...")

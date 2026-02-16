@@ -57,6 +57,9 @@ fi
 
 cd "${REPO_DIR}"
 
+# Add upstream remote pointing to the mirror repo (read-only, for syncing with GitHub)
+git remote add upstream "${GITEA_URL}/sandbox-admin/${REPO_NAME}.git" 2>/dev/null || true
+
 # Checkout specified branch if set
 if [[ -n "${REPO_BRANCH:-}" ]]; then
     git checkout "${REPO_BRANCH}" 2>/dev/null || git checkout -b "${REPO_BRANCH}"
