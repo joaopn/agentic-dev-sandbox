@@ -36,6 +36,14 @@ fi
 
 sudo /usr/sbin/sshd
 
+# --- Configure apt to use proxy ---
+if [[ -n "${HTTP_PROXY:-}" ]]; then
+    sudo tee /etc/apt/apt.conf.d/01proxy > /dev/null <<APT_EOF
+Acquire::http::Proxy "${HTTP_PROXY}";
+Acquire::https::Proxy "${HTTPS_PROXY:-$HTTP_PROXY}";
+APT_EOF
+fi
+
 # --- Git configuration ---
 git config --global user.name "sandbox-agent"
 git config --global user.email "agent@sandbox.local"
