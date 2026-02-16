@@ -948,18 +948,25 @@ def cmd_status(args: argparse.Namespace) -> None:
     if not containers:
         print("  (no agent containers)")
     else:
-        print(f"  {'NAME':<30s} {'STATE':<12s} {'STATUS':<25s} PORTS")
+        # Collect data first to compute column widths
+        rows = []
         for name in containers:
+            project_name = name.removeprefix("sandbox-agent-")
             r = subprocess.run(
                 ["docker", "inspect", "-f",
-                 "{{.State.Status}}\t{{.State.Status}}\t{{range .NetworkSettings.Ports}}"
-                 "{{range .}}{{.HostPort}}{{end}}{{end}}", name],
+                 "{{.State.Status}}\t{{range $p, $binds := .HostConfig.PortBindings}}"
+                 "{{range $binds}}{{.HostPort}}{{end}}{{end}}", name],
                 capture_output=True, text=True,
             )
-            parts = r.stdout.strip().split("\t") if r.returncode == 0 else ["?", "?", "?"]
-            while len(parts) < 3:
-                parts.append("")
-            print(f"  {name:<30s} {parts[0]:<12s} {parts[1]:<25s} {parts[2]}")
+            parts = r.stdout.strip().split("\t") if r.returncode == 0 else ["?", ""]
+            state = parts[0] if parts else "?"
+            ssh_port = parts[1] if len(parts) > 1 and parts[1] else "-"
+            rows.append((project_name, state, ssh_port))
+        name_width = max(len(r[0]) for r in rows) + 4
+        name_width = max(name_width, len("PROJECT"))
+        print(f"  {'PROJECT':<{name_width}s}  {'STATE':<10s}  SSH PORT")
+        for project_name, state, ssh_port in rows:
+            print(f"  {project_name:<{name_width}s}  {state:<10s}  {ssh_port}")
 
     if cfg.projects_dir:
         print(f"\n── Projects Directory ──\n  {cfg.projects_dir}")
