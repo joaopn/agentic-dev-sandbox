@@ -658,6 +658,27 @@ def cmd_attach(args: argparse.Namespace) -> None:
     container = f"sandbox-agent-{args.project}"
     if not container_running(container):
         die(f"Container {container} is not running. Run: sandbox start {args.project}")
+    # Recreate byobu session if it was destroyed (e.g. user typed exit instead of F6)
+    r = subprocess.run(
+        ["docker", "exec", container, "byobu", "has-session", "-t", "main"],
+        capture_output=True,
+    )
+    if r.returncode != 0:
+        repo = subprocess.run(
+            ["docker", "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", container],
+            capture_output=True, text=True,
+        )
+        repo_name = ""
+        for line in repo.stdout.splitlines():
+            if line.startswith("REPO_NAME="):
+                repo_name = line.split("=", 1)[1]
+                break
+        repo_dir = f"/home/agent/{repo_name}" if repo_name else "/home/agent"
+        subprocess.run(
+            ["docker", "exec", "-d", container,
+             "byobu", "new-session", "-d", "-s", "main", "-c", repo_dir, "exec bash"],
+            capture_output=True,
+        )
     print(f"Attaching to {args.project} byobu session (F6 to detach)...")
     os.execvp("docker", ["docker", "exec", "-it", container, "byobu", "attach", "-t", "main"])
 
