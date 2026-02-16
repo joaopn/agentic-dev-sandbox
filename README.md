@@ -57,7 +57,7 @@ cp .env.example .env
 python sandbox.py setup
 
 # 3. Create a sandboxed project
-python sandbox.py create https://github.com/you/myproject
+python sandbox.py create https://github.com/you/myproject --profile python
 
 # 4. Interact with the agent
 python sandbox.py attach myproject
@@ -107,13 +107,13 @@ Commands:
   logs <project>                 Tail container logs
 
 Create/recreate options:
+  --profile <name>               Agent image profile (required)
   --branch <name>                Branch to check out
   --claude                       Install Claude Code CLI, auto-start in byobu
   --open-egress                  Allow all outbound ports (default: 80/443/DNS)
   --memory <limit>               Container memory limit (default: unlimited)
   --cpus <limit>                 Container CPU limit
   --gpus <device>                GPU passthrough (e.g., "all"); requires NVIDIA Container Toolkit
-  --image <name>                 Custom agent Docker image
   --ssh-port <port>              Host port for SSH (default: auto-assigned)
 ```
 
@@ -131,6 +131,24 @@ in the VS Code terminal to connect to the agent session.
 **Important**: Verify these VS Code settings are disabled before connecting:
 - `remote.SSH.enableAgentForwarding` — must be off (forwards host SSH keys)
 - Git credential forwarding — must not be configured
+
+## Image Profiles
+
+Profiles let you pick different base environments for agent containers. Each profile is a
+Dockerfile in `agent/` named `Dockerfile.<profile>`. 
+
+| Profile | Base image | Includes |
+|---|---|---|
+| `python` | `continuumio/miniconda3` | Conda, git, byobu, sshd |
+
+```bash
+python sandbox.py create https://github.com/you/myproject --profile python
+```
+
+To add a custom profile, create `agent/Dockerfile.myprofile`. It must set up a non-root
+`agent` user (UID 1000) with passwordless sudo, an SSH server, and `/home/agent` as the
+working directory. Copy an existing Dockerfile as a starting point. The entrypoint is always
+`agent/entrypoint.sh`.
 
 ## Reviewer Configuration
 
@@ -188,8 +206,8 @@ agentic-dev-sandbox/
 ├── container/                    Files copied into each agent workspace
 │   └── CLAUDE.md                 Default agent instructions
 ├── agent/
-│   ├── Dockerfile                Agent image: python, node, git, byobu, sshd
-│   └── entrypoint.sh            Clone, configure git, start sshd + byobu
+│   ├── Dockerfile.python         Agent image: conda, git, byobu, sshd
+│   └── entrypoint.sh            Clone, configure git, start sshd + byobu (shared)
 ├── review/
 │   ├── Dockerfile                Review service image
 │   ├── review-server.py          Webhook listener: diff → LLM review → comment
@@ -204,7 +222,7 @@ agentic-dev-sandbox/
 
 ### `container/` directory
 
-Any files placed in `container/` are copied into each agent's workspace volume at `/workspace/[repo]`. 
+Any files placed in `container/` are copied into each agent's home directory volume at `/home/agent/`.
 Use this to provide SSH authentication (in a `.ssh/` subfolder), config files, or custom instructions to every agent. 
 By default it ships with a `CLAUDE.md` containing baseline agent instructions.
 
@@ -291,9 +309,10 @@ VS Code (for instance) automatically forwards your SSH agent, git credentials, a
 Extensions run with full container permissions. 
 An update can re-enable unhardened defaults.
 
+
 ### GPU / CUDA support?
 
-Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host and pass `--gpus all` when creating the project. Use `--image` to provide a CUDA base image if your workload needs one — the toolkit mounts the host driver automatically.
+Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host and pass `--gpus all` when creating the project. Create a custom profile with a CUDA base image if your workload needs one — the toolkit mounts the host driver automatically.
 
 ### Rootless Docker support?
 

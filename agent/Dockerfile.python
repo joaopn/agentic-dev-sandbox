@@ -1,22 +1,19 @@
-FROM ubuntu:24.04
+FROM continuumio/miniconda3
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Core tools: python, node, git, byobu, ssh, utilities
+# Core tools: byobu, ssh, git, utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv \
-    nodejs npm \
-    git curl wget ca-certificates \
+    git curl \
     byobu \
     openssh-server \
-    jq \
     iputils-ping \
     sudo \
     locales \
     && rm -rf /var/lib/apt/lists/*
 
 # Locale setup (many tools expect UTF-8)
-RUN locale-gen en_US.UTF-8
+RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 # SSH server setup
@@ -29,13 +26,16 @@ RUN mkdir -p /run/sshd && \
 RUN useradd -m -s /bin/bash -G sudo agent && \
     echo "agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agent
 
-# Workspace directory (will be a Docker volume mount)
-RUN mkdir -p /workspace && chown agent:agent /workspace
+# Initialize conda for the agent user (adds shell hooks to .bashrc)
+RUN su - agent -c "/opt/conda/bin/conda init bash"
+
+# Stash home directory (volume mount on /home/agent hides image contents)
+RUN cp -a /home/agent /etc/agent-skel
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 USER agent
-WORKDIR /workspace
+WORKDIR /home/agent
 
 ENTRYPOINT ["/entrypoint.sh"]

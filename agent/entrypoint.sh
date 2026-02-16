@@ -15,18 +15,19 @@ set -euo pipefail
 
 echo "=== Agent container starting ==="
 
-# --- Fix workspace ownership (bind mounts override Dockerfile chown) ---
-sudo chown agent:agent /workspace
+# --- Restore home directory dotfiles (volume mount hides image contents) ---
+sudo chown agent:agent /home/agent
+if [[ ! -f ~/.bashrc ]]; then
+    cp -a /etc/agent-skel/. ~/
+fi
 
 # --- SSH setup ---
 if [[ -n "${SSH_PASSWORD:-}" ]]; then
     echo "agent:${SSH_PASSWORD}" | sudo chpasswd
 fi
 
-# Import authorized keys from mounted volume if present
-if [[ -f /workspace/.ssh/authorized_keys ]]; then
-    mkdir -p ~/.ssh
-    cp /workspace/.ssh/authorized_keys ~/.ssh/authorized_keys
+# Fix permissions on authorized keys injected by sandbox.py
+if [[ -f ~/.ssh/authorized_keys ]]; then
     chmod 700 ~/.ssh
     chmod 600 ~/.ssh/authorized_keys
 fi
@@ -46,7 +47,7 @@ chmod 600 ~/.git-credentials
 git config --global credential.helper 'store --file ~/.git-credentials'
 
 # --- Clone or update repo ---
-REPO_DIR="/workspace/${REPO_NAME}"
+REPO_DIR=~/"${REPO_NAME}"
 
 if [[ ! -d "${REPO_DIR}/.git" ]]; then
     echo "Cloning ${REPO_NAME} from Gitea..."
@@ -61,12 +62,6 @@ cd "${REPO_DIR}"
 # Checkout specified branch if set
 if [[ -n "${REPO_BRANCH:-}" ]]; then
     git checkout "${REPO_BRANCH}" 2>/dev/null || git checkout -b "${REPO_BRANCH}"
-fi
-
-# --- Copy CLAUDE.md into workspace root ---
-if [[ -f /workspace/.sandbox/CLAUDE.md ]]; then
-    cp /workspace/.sandbox/CLAUDE.md "${REPO_DIR}/CLAUDE.md"
-    echo "CLAUDE.md copied to workspace root"
 fi
 
 # --- Install Claude Code CLI if requested ---

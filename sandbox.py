@@ -34,7 +34,7 @@ class Config:
         self.gitea_port = "3000"
         self.default_memory = ""
         self.default_open_egress = False
-        self.default_image = "sandbox-agent:latest"
+        self.default_profile = ""
         self.dns_servers: list[str] = []
 
 
@@ -183,6 +183,20 @@ def parse_project_name(url: str) -> str:
     return name
 
 
+def resolve_profile_image(profile: str) -> tuple[str, Path]:
+    """Return (image_tag, dockerfile_path) for a given profile name."""
+    dockerfile = SCRIPT_DIR / "agent" / f"Dockerfile.{profile}"
+    if not dockerfile.exists():
+        available = sorted(
+            p.name.removeprefix("Dockerfile.")
+            for p in (SCRIPT_DIR / "agent").glob("Dockerfile.*")
+            if not p.name.endswith(".sh")
+        )
+        die(f"Unknown profile '{profile}'. Available: {', '.join(available)}")
+    image_tag = f"sandbox-agent-{profile}:latest"
+    return image_tag, dockerfile
+
+
 def get_agent_containers() -> list[str]:
     r = subprocess.run(
         ["docker", "ps", "-a", "--filter", "name=^sandbox-agent-", "--format", "{{.Names}}"],
@@ -242,7 +256,7 @@ def build_agent_docker_args(
         "--network", network,
         "--hostname", project,
         *dns_args,
-        "-v", f"{volume_name}:/workspace",
+        "-v", f"{volume_name}:/home/agent",
         "-p", f"{ssh_port}:22",
         "-e", f"GITEA_URL={GITEA_INTERNAL_URL}",
         "-e", f"GITEA_TOKEN={agent_token}",
@@ -569,10 +583,18 @@ def cmd_create(args: argparse.Namespace) -> None:
         print("Reviewer disabled — skipping webhook.")
 
     # 5. Build agent image if needed
-    image = args.image or cfg.default_image
+    profile = args.profile or cfg.default_profile
+    if not profile:
+        available = sorted(
+            p.name.removeprefix("Dockerfile.")
+            for p in (SCRIPT_DIR / "agent").glob("Dockerfile.*")
+            if not p.name.endswith(".sh")
+        )
+        die(f"--profile is required. Available: {', '.join(available)}")
+    image, dockerfile = resolve_profile_image(profile)
     if not run_quiet(["docker", "image", "inspect", image]):
-        print(f"Building agent image: {image}...")
-        run_check(["docker", "build", "-t", image, str(SCRIPT_DIR / "agent")])
+        print(f"Building agent image: {image} (profile: {profile})...")
+        run_check(["docker", "build", "-t", image, "-f", str(dockerfile), str(SCRIPT_DIR / "agent")])
 
     # 6. Create Docker volume
     if not run_quiet(["docker", "volume", "inspect", volume_name]):
@@ -585,15 +607,15 @@ def cmd_create(args: argparse.Namespace) -> None:
         else:
             run_check(["docker", "volume", "create", volume_name])
 
-    # Copy container/ files to workspace and fix ownership for bind mounts
+    # Copy container/ files to agent home and fix ownership for bind mounts
     container_src = SCRIPT_DIR / "container"
     if container_src.is_dir():
-        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/workspace",
+        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent",
                     "-v", f"{container_src}:/src:ro", "alpine",
-                    "sh", "-c", "mkdir -p /workspace/.sandbox && cp /src/* /workspace/.sandbox/ && chown -R 1000:1000 /workspace"])
+                    "sh", "-c", "cp /src/* /home/agent/ && chown -R 1000:1000 /home/agent"])
     else:
-        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/workspace", "alpine",
-                    "sh", "-c", "chown -R 1000:1000 /workspace"])
+        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
+                    "sh", "-c", "chown -R 1000:1000 /home/agent"])
 
     # 7. Create per-project network and connect infrastructure
     print("Setting up agent network...")
@@ -620,9 +642,9 @@ def cmd_create(args: argparse.Namespace) -> None:
             keys.append(pub.read_text())
         if keys:
             key_data = "".join(keys).replace("\n", "\\n")
-            run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/workspace", "alpine",
+            run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
                         "sh", "-c",
-                        f"mkdir -p /workspace/.ssh && printf '{key_data}' > /workspace/.ssh/authorized_keys"])
+                        f"mkdir -p /home/agent/.ssh && printf '{key_data}' > /home/agent/.ssh/authorized_keys"])
 
     docker_args = build_agent_docker_args(
         container_name=container_name, project=project, network=agent_network,
@@ -728,7 +750,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
     if container_running(container):
         print("Pulling latest in container...")
         run(["docker", "exec", container, "bash", "-c",
-             f"cd /workspace/{project} && git pull --ff-only"], capture_output=True)
+             f"cd /home/agent/{project} && git pull --ff-only"], capture_output=True)
 
     print("Sync complete.")
 
@@ -873,10 +895,18 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     agent_token = generate_gitea_token(cfg, gitea_user, user_pass)
 
     # Start new container
-    image = args.image or cfg.default_image
+    profile = args.profile or cfg.default_profile
+    if not profile:
+        available = sorted(
+            p.name.removeprefix("Dockerfile.")
+            for p in (SCRIPT_DIR / "agent").glob("Dockerfile.*")
+            if not p.name.endswith(".sh")
+        )
+        die(f"--profile is required. Available: {', '.join(available)}")
+    image, dockerfile = resolve_profile_image(profile)
     if not run_quiet(["docker", "image", "inspect", image]):
-        print(f"Building agent image: {image}...")
-        run_check(["docker", "build", "-t", image, str(SCRIPT_DIR / "agent")])
+        print(f"Building agent image: {image} (profile: {profile})...")
+        run_check(["docker", "build", "-t", image, "-f", str(dockerfile), str(SCRIPT_DIR / "agent")])
 
     # Ensure per-project network exists
     open_egress = args.open_egress or cfg.default_open_egress
@@ -1010,7 +1040,7 @@ def build_parser() -> argparse.ArgumentParser:
     container_flags.add_argument("--memory", default="")
     container_flags.add_argument("--cpus", default="")
     container_flags.add_argument("--gpus", default="")
-    container_flags.add_argument("--image", default="")
+    container_flags.add_argument("--profile", default="")
     container_flags.add_argument("--ssh-port", type=int, default=0)
 
     sub.add_parser("setup", help="One-time infrastructure setup").set_defaults(func=cmd_setup)
