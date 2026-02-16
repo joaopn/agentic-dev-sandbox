@@ -487,7 +487,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     print(f"""
 === Setup Complete ===
-Gitea UI:      http://localhost:{cfg.gitea_port}
+Gitea UI:      http://localhost:{cfg.gitea_port}/explore/repos?sort=newest&type=fork
 Projects dir:  {cfg.projects_dir}
 
 Tip: Add sandbox to your PATH:
@@ -519,6 +519,8 @@ def cmd_create(args: argparse.Namespace) -> None:
         })
         print("Mirror created. Waiting for initial sync...")
         time.sleep(5)
+    gitea_api_ok(cfg, "PATCH", f"/repos/sandbox-admin/{project}",
+                 {"description": f"Read-only mirror of {args.github_url}"})
 
     # 2. Create per-project Gitea user
     print(f"Setting up Gitea user: {gitea_user}...")
@@ -550,7 +552,9 @@ def cmd_create(args: argparse.Namespace) -> None:
             die(f"Failed to fork repo to {gitea_user}: {e}")
         time.sleep(2)
 
-    # Grant admin read access to the agent fork (for browsing in Gitea webui)
+    # Label and grant admin read access to the agent fork (for browsing in Gitea webui)
+    gitea_api_ok(cfg, "PATCH", f"/repos/{gitea_user}/{project}",
+                 {"description": "Agent workspace"})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-admin",
                  {"permission": "read"})
 
