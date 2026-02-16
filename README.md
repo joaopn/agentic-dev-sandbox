@@ -21,7 +21,8 @@ graph LR
   container that blocks LAN access and restricts egress ports by default.
 - [Optional] **Review service** receives webhooks on agent pushes and posts automated security
   reviews (backdoors, exfiltration, dependency manipulation) as Gitea commit comments. 
-- You review diffs in the Gitea webui or your IDE using `git fetch` from Gitea and merge what you want.
+- You review diffs in the Gitea webui or your IDE using `git fetch` from Gitea
+- You merge what you want back to Github (human-in-the-loop)
 
 ## Prerequisites
 
@@ -51,13 +52,14 @@ cp .env.example .env
 # 2. One-time setup (starts Gitea, review service, router)
 python sandbox.py setup
 
-# 3. Create a sandboxed project
-python sandbox.py create https://github.com/you/myproject --profile python
+# 3. Create a sandboxed project with python and Claude Code
+python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
 
 # 4. Interact with the agent
 python sandbox.py attach myproject
-# You're in a byobu terminal session inside the agent container.
-# F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
+## You're in a byobu terminal session inside the agent container.
+## F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
+## If --claude-yolo, `claude` will prompt authentication
 
 # 5. Review the agent's work 
 ## From the Gitea GUI: http://localhost:3000 (default port)
@@ -65,7 +67,7 @@ python sandbox.py attach myproject
 cd ~/repos/myproject
 git remote add staging http://localhost:3000/agent-myproject/myproject.git
 python /path/to/sandbox.py review myproject feature-branch
-# Shows: security review, symlink check, auto-execute file check, diffstat
+## Shows: security review, symlink check, auto-execute file check, diffstat
 
 # 6. Merge what you want
 git diff main...staging/agent/feature-branch
@@ -110,6 +112,7 @@ Create/recreate options:
   --cpus <limit>                 Container CPU limit
   --gpus <device>                GPU passthrough (e.g., "all"); requires NVIDIA Container Toolkit
   --ssh-port <port>              Host port for SSH (default: auto-assigned)
+  --claude-yolo                  Install Claude Code, auto-configure bypass permissions
 ```
 
 ## File Structure

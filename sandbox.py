@@ -224,6 +224,24 @@ def docker_compose(*args: str) -> None:
     ])
 
 
+def install_claude_code(container_name: str) -> None:
+    """Install Claude Code inside the agent container (synchronous, needs network)."""
+    r = subprocess.run(
+        ["docker", "exec", container_name, "bash", "-c",
+         '[[ -x "$HOME/.local/bin/claude" ]]'],
+        capture_output=True,
+    )
+    if r.returncode == 0:
+        print("Claude Code already installed, skipping.")
+        return
+    print("Installing Claude Code (this may take a minute)...")
+    run_check([
+        "docker", "exec", container_name, "bash", "-c",
+        'export PATH="$HOME/.local/bin:$PATH" && curl -fsSL https://claude.ai/install.sh | bash',
+    ])
+    print("Claude Code installed.")
+
+
 def build_agent_docker_args(
     *,
     container_name: str,
@@ -241,6 +259,7 @@ def build_agent_docker_args(
     branch: str = "",
     cpus: str = "",
     gpus: str = "",
+    claude_yolo: bool = False,
 ) -> list[str]:
     """Build the docker run argument list. Shared by create and recreate."""
     dns_args = []
@@ -276,6 +295,8 @@ def build_agent_docker_args(
         args += [f"--cpus={cpus}"]
     if gpus:
         args += [f"--gpus={gpus}"]
+    if claude_yolo:
+        args += ["-e", "CLAUDE_YOLO=true"]
     args.append(image)
     return args
 
@@ -641,13 +662,17 @@ def cmd_create(args: argparse.Namespace) -> None:
         gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or "",
+        gpus=args.gpus or "", claude_yolo=args.claude_yolo,
     )
     run_check(["docker", *docker_args])
 
     # 10. Inject default route through the router
     print("Injecting network route...")
     inject_route(container_name, router_ip)
+
+    # 11. Install Claude Code if --claude-yolo (needs network, so after route injection)
+    if args.claude_yolo:
+        install_claude_code(container_name)
 
     egress_label = "open (all ports)" if open_egress else "locked (80/443/DNS only)"
     print(f"""
@@ -955,7 +980,7 @@ def cmd_recreate(args: argparse.Namespace) -> None:
         gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or "",
+        gpus=args.gpus or "", claude_yolo=args.claude_yolo,
     )
 
     print("Starting new container...")
@@ -964,6 +989,10 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     # Inject default route through the router
     print("Injecting network route...")
     inject_route(container_name, router_ip)
+
+    # Install Claude Code if --claude-yolo (needs network, so after route injection)
+    if args.claude_yolo:
+        install_claude_code(container_name)
 
     print(f"""
 === Recreated: {project} ===
@@ -1081,6 +1110,7 @@ def build_parser() -> argparse.ArgumentParser:
     container_flags.add_argument("--gpus", default="")
     container_flags.add_argument("--profile", default="")
     container_flags.add_argument("--ssh-port", type=int, default=0)
+    container_flags.add_argument("--claude-yolo", action="store_true")
 
     sub.add_parser("setup", help="One-time infrastructure setup").set_defaults(func=cmd_setup)
 

@@ -8,6 +8,7 @@
 #   REPO_NAME        — Repository name
 #   REPO_BRANCH      — Branch to check out (optional, defaults to repo default)
 #   SSH_PASSWORD     — Password for SSH access
+#   CLAUDE_YOLO      — Install Claude Code + bypass permissions (optional)
 
 set -euo pipefail
 
@@ -43,6 +44,36 @@ GITEA_HOST=$(echo "$GITEA_URL" | sed 's|https\?://||')
 echo "${GITEA_URL//:\/\//:\/\/${GITEA_USER}:${GITEA_TOKEN}@}" > ~/.git-credentials
 chmod 600 ~/.git-credentials
 git config --global credential.helper 'store --file ~/.git-credentials'
+
+# --- Claude Code setup (if --claude-yolo) ---
+if [[ "${CLAUDE_YOLO:-}" == "true" ]]; then
+    # Ensure ~/.local/bin is in PATH
+    if ! grep -q '.local/bin' ~/.bashrc 2>/dev/null; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+    fi
+
+    # Pre-configure settings (no network needed, only on first run)
+    if [[ ! -f ~/.claude/settings.json ]]; then
+        mkdir -p ~/.claude
+        cat > ~/.claude/settings.json << 'SETTINGS'
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "theme": "dark"
+}
+SETTINGS
+    fi
+
+    if [[ ! -f ~/.claude.json ]]; then
+        cat > ~/.claude.json << 'SETTINGS'
+{
+  "theme": "dark"
+}
+SETTINGS
+    fi
+
+fi
 
 # --- Clone or update repo ---
 REPO_DIR=~/"${REPO_NAME}"
