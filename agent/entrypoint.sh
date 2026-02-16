@@ -10,9 +10,6 @@
 #   INSTALL_CLAUDE   — If "1", install Claude Code CLI and auto-start it
 #   ANTHROPIC_API_KEY — API key for Claude Code (if INSTALL_CLAUDE=1)
 #   SSH_PASSWORD     — Password for SSH access
-#   HTTP_PROXY       — Proxy URL for locked egress (optional)
-#   HTTPS_PROXY      — Proxy URL for locked egress (optional)
-#   NO_PROXY         — Proxy bypass list (optional)
 
 set -euo pipefail
 
@@ -35,14 +32,6 @@ if [[ -f /workspace/.ssh/authorized_keys ]]; then
 fi
 
 sudo /usr/sbin/sshd
-
-# --- Configure apt to use proxy ---
-if [[ -n "${HTTP_PROXY:-}" ]]; then
-    sudo tee /etc/apt/apt.conf.d/01proxy > /dev/null <<APT_EOF
-Acquire::http::Proxy "${HTTP_PROXY}";
-Acquire::https::Proxy "${HTTPS_PROXY:-$HTTP_PROXY}";
-APT_EOF
-fi
 
 # --- Git configuration ---
 git config --global user.name "sandbox-agent"

@@ -46,24 +46,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  proxy:
-    build: ./proxy
-    container_name: sandbox-proxy
+  router:
+    build: ./router
+    container_name: sandbox-router
     networks:
       - dev-sandbox
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+    volumes:
+      - router-rules:/etc/sandbox/rules
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "squid", "-k", "check", "-f", "/etc/squid/squid.conf"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 volumes:
   gitea-data:
+  router-rules:
 
 networks:
-  # Infrastructure network: has internet access.
-  # Agent networks are created per-project by sandbox.py (internal, no gateway).
+  # Infrastructure network: has internet access via Docker gateway.
+  # Agent networks are created per-project by sandbox.py (internal, routed through sandbox-router).
   dev-sandbox:
     name: dev-sandbox
     driver: bridge

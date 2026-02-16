@@ -35,6 +35,7 @@ class Config:
         self.default_memory = ""
         self.default_open_egress = False
         self.default_image = "sandbox-agent:latest"
+        self.dns_servers: list[str] = []
 
 
 def load_config() -> Config:
@@ -59,6 +60,10 @@ def load_config() -> Config:
     cfg.gitea_admin_token = os.environ.get("GITEA_ADMIN_TOKEN", "")
     cfg.gitea_port = os.environ.get("GITEA_PORT", "3000")
     cfg.projects_dir = os.environ.get("PROJECTS_DIR", "./container_volumes/")
+    dns = os.environ.get("SANDBOX_DNS", "")
+    if not dns.strip():
+        die("SANDBOX_DNS not set in .env. Example: SANDBOX_DNS=9.9.9.9,149.112.112.112")
+    cfg.dns_servers = [s.strip() for s in dns.split(",") if s.strip()]
 
     # Resolve relative projects_dir to absolute
     if cfg.projects_dir:
@@ -218,7 +223,7 @@ def build_agent_docker_args(
     gitea_user: str,
     install_claude: bool,
     ssh_pass: str,
-    proxy_port: int,
+    dns_servers: list[str],
     memory: str,
     open_egress: bool,
     image: str,
@@ -228,11 +233,15 @@ def build_agent_docker_args(
     agent_api_key: str = "",
 ) -> list[str]:
     """Build the docker run argument list. Shared by create and recreate."""
+    dns_args = []
+    for s in dns_servers:
+        dns_args += ["--dns", s]
     args = [
         "run", "-d",
         "--name", container_name,
         "--network", network,
         "--hostname", project,
+        *dns_args,
         "-v", f"{volume_name}:/workspace",
         "-p", f"{ssh_port}:22",
         "-e", f"GITEA_URL={GITEA_INTERNAL_URL}",
@@ -241,17 +250,11 @@ def build_agent_docker_args(
         "-e", f"REPO_NAME={project}",
         "-e", f"INSTALL_CLAUDE={'1' if install_claude else '0'}",
         "-e", f"SSH_PASSWORD={ssh_pass}",
-        "-e", f"HTTP_PROXY=http://sandbox-proxy:{proxy_port}",
-        "-e", f"HTTPS_PROXY=http://sandbox-proxy:{proxy_port}",
-        "-e", f"http_proxy=http://sandbox-proxy:{proxy_port}",
-        "-e", f"https_proxy=http://sandbox-proxy:{proxy_port}",
-        "-e", "NO_PROXY=sandbox-gitea,sandbox-review,sandbox-proxy,localhost,127.0.0.1",
-        "-e", "no_proxy=sandbox-gitea,sandbox-review,sandbox-proxy,localhost,127.0.0.1",
         # Runtime hardening
         "--cap-drop=ALL",
         "--cap-add=CHOWN", "--cap-add=FOWNER", "--cap-add=SETGID",
         "--cap-add=SETUID", "--cap-add=KILL", "--cap-add=FSETID",
-        "--cap-add=AUDIT_WRITE",
+        "--cap-add=AUDIT_WRITE", "--cap-add=NET_RAW",
         "--pids-limit=512",
         "--label", f"sandbox.project={project}",
         "--label", f"sandbox.egress={open_egress}",
@@ -307,23 +310,80 @@ def generate_gitea_token(cfg: Config, gitea_user: str, user_pass: str) -> str:
     return token
 
 
-def ensure_agent_network(project: str, cfg: Config) -> str:
-    """Create a per-project internal network and connect infrastructure services."""
+def get_router_ip(network: str) -> str:
+    """Get the router container's IP address on a specific network."""
+    r = run_check([
+        "docker", "inspect", "sandbox-router",
+        "-f", "{{(index .NetworkSettings.Networks \"" + network + "\").IPAddress}}",
+    ])
+    ip = r.stdout.strip()
+    if not ip:
+        die(f"Router not connected to network {network}")
+    return ip
+
+
+def get_network_subnet(network: str) -> str:
+    """Get the subnet CIDR for a Docker network."""
+    r = run_check([
+        "docker", "network", "inspect", network,
+        "-f", "{{(index .IPAM.Config 0).Subnet}}",
+    ])
+    return r.stdout.strip()
+
+
+def inject_route(container: str, router_ip: str) -> None:
+    """Inject a default route into a container's network namespace using a throwaway container."""
+    run_check([
+        "docker", "run", "--rm", "--privileged",
+        "--network", f"container:{container}",
+        "alpine", "ip", "route", "add", "default", "via", router_ip,
+    ])
+
+
+def apply_firewall_rules(network: str, open_egress: bool) -> None:
+    """Apply iptables rules in the router for an agent network."""
+    subnet = get_network_subnet(network)
+    mode = "open" if open_egress else "locked"
+    run_check([
+        "docker", "exec", "sandbox-router",
+        "/scripts/apply-rules.sh", subnet, mode,
+    ])
+
+
+def remove_firewall_rules(network: str) -> None:
+    """Remove iptables rules in the router for an agent network."""
+    try:
+        subnet = get_network_subnet(network)
+        run(["docker", "exec", "sandbox-router",
+             "/scripts/remove-rules.sh", subnet], capture_output=True)
+    except Exception:
+        pass  # Network may already be gone
+
+
+def ensure_agent_network(project: str, cfg: Config, open_egress: bool = False) -> tuple[str, str]:
+    """Create a per-project internal network, connect infrastructure, apply firewall rules.
+
+    Returns (network_name, router_ip).
+    """
     network = f"sandbox-net-{project}"
     if not run_quiet(["docker", "network", "inspect", network]):
         run_check(["docker", "network", "create", "--internal", network])
     # Connect infrastructure services (ignore errors if already connected)
-    for svc in ["sandbox-gitea", "sandbox-proxy"]:
+    for svc in ["sandbox-gitea", "sandbox-router"]:
         run(["docker", "network", "connect", network, svc], capture_output=True)
     if cfg.reviewer_enabled:
         run(["docker", "network", "connect", network, "sandbox-review"], capture_output=True)
-    return network
+
+    router_ip = get_router_ip(network)
+    apply_firewall_rules(network, open_egress)
+    return network, router_ip
 
 
 def remove_agent_network(project: str) -> None:
-    """Disconnect infrastructure and remove per-project network."""
+    """Remove firewall rules, disconnect infrastructure, and remove per-project network."""
     network = f"sandbox-net-{project}"
-    for svc in ["sandbox-gitea", "sandbox-proxy", "sandbox-review"]:
+    remove_firewall_rules(network)
+    for svc in ["sandbox-gitea", "sandbox-router", "sandbox-review"]:
         run(["docker", "network", "disconnect", network, svc], capture_output=True)
     run(["docker", "network", "rm", network], capture_output=True)
 
@@ -369,11 +429,11 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     # Start infrastructure
     if cfg.reviewer_enabled:
-        print("Starting infrastructure (Gitea, review service, proxy)...")
+        print("Starting infrastructure (Gitea, review service, router)...")
         docker_compose("up", "-d", "--build")
     else:
-        print("Starting infrastructure (Gitea, proxy — reviewer disabled)...")
-        docker_compose("up", "-d", "--build", "gitea", "proxy")
+        print("Starting infrastructure (Gitea, router — reviewer disabled)...")
+        docker_compose("up", "-d", "--build", "gitea", "router")
 
     wait_for_gitea(cfg)
 
@@ -537,7 +597,8 @@ def cmd_create(args: argparse.Namespace) -> None:
 
     # 7. Create per-project network and connect infrastructure
     print("Setting up agent network...")
-    agent_network = ensure_agent_network(project, cfg)
+    open_egress = args.open_egress or cfg.default_open_egress
+    agent_network, router_ip = ensure_agent_network(project, cfg, open_egress)
 
     # 8. Remove existing container
     if container_exists(container_name):
@@ -547,8 +608,6 @@ def cmd_create(args: argparse.Namespace) -> None:
     # 9. Start agent container
     print("Starting agent container...")
 
-    open_egress = args.open_egress or cfg.default_open_egress
-    proxy_port = 3129 if open_egress else 3128
     ssh_port = args.ssh_port or find_free_port(2222)
     ssh_pass = gen_password()
     memory = args.memory or cfg.default_memory
@@ -569,11 +628,15 @@ def cmd_create(args: argparse.Namespace) -> None:
         container_name=container_name, project=project, network=agent_network,
         volume_name=volume_name, ssh_port=ssh_port, agent_token=agent_token,
         gitea_user=gitea_user, install_claude=args.claude, ssh_pass=ssh_pass,
-        proxy_port=proxy_port, memory=memory, open_egress=open_egress, image=image,
+        dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
         gpus=args.gpus or "", agent_api_key=cfg.agent_api_key,
     )
     run_check(["docker", *docker_args])
+
+    # 10. Inject default route through the router
+    print("Injecting network route...")
+    inject_route(container_name, router_ip)
 
     egress_label = "open (all ports)" if open_egress else "locked (80/443/DNS only)"
     print(f"""
@@ -601,7 +664,50 @@ def cmd_stop(args: argparse.Namespace) -> None:
 
 
 def cmd_start(args: argparse.Namespace) -> None:
-    for_containers("start", args.target)
+    cfg = load_config()
+    if args.target == "--all":
+        containers = get_agent_containers()
+        if not containers:
+            print("No sandbox agent containers found.")
+            return
+        for name in containers:
+            print(f"start {name}...")
+            run(["docker", "start", name])
+            _reinject_route(name, cfg)
+    else:
+        container = f"sandbox-agent-{args.target}"
+        if not container_exists(container):
+            die(f"Container {container} not found.")
+        run(["docker", "start", container])
+        _reinject_route(container, cfg)
+
+
+def _reinject_route(container: str, cfg: Config) -> None:
+    """Re-inject the default route and ensure firewall rules after starting a container."""
+    # Get the project name from the container's label
+    r = subprocess.run(
+        ["docker", "inspect", "-f", "{{index .Config.Labels \"sandbox.project\"}}", container],
+        capture_output=True, text=True,
+    )
+    project = r.stdout.strip()
+    if not project:
+        return
+
+    network = f"sandbox-net-{project}"
+    try:
+        router_ip = get_router_ip(network)
+        inject_route(container, router_ip)
+
+        # Re-apply firewall rules (idempotent, covers router restart case)
+        r = subprocess.run(
+            ["docker", "inspect", "-f", "{{index .Config.Labels \"sandbox.egress\"}}", container],
+            capture_output=True, text=True,
+        )
+        open_egress = r.stdout.strip() == "True"
+        apply_firewall_rules(network, open_egress)
+        print(f"  Route and firewall rules applied for {project}")
+    except Exception as e:
+        print(f"  Warning: Failed to inject route for {project}: {e}", file=sys.stderr)
 
 
 def cmd_pause(args: argparse.Namespace) -> None:
@@ -773,10 +879,9 @@ def cmd_recreate(args: argparse.Namespace) -> None:
         run_check(["docker", "build", "-t", image, str(SCRIPT_DIR / "agent")])
 
     # Ensure per-project network exists
-    agent_network = ensure_agent_network(project, cfg)
-
     open_egress = args.open_egress or cfg.default_open_egress
-    proxy_port = 3129 if open_egress else 3128
+    agent_network, router_ip = ensure_agent_network(project, cfg, open_egress)
+
     ssh_port = args.ssh_port or find_free_port(2222)
     ssh_pass = gen_password()
     memory = args.memory or cfg.default_memory
@@ -785,13 +890,17 @@ def cmd_recreate(args: argparse.Namespace) -> None:
         container_name=container_name, project=project, network=agent_network,
         volume_name=volume_name, ssh_port=ssh_port, agent_token=agent_token,
         gitea_user=gitea_user, install_claude=args.claude, ssh_pass=ssh_pass,
-        proxy_port=proxy_port, memory=memory, open_egress=open_egress, image=image,
+        dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
         gpus=args.gpus or "", agent_api_key=cfg.agent_api_key,
     )
 
     print("Starting new container...")
     run_check(["docker", *docker_args])
+
+    # Inject default route through the router
+    print("Injecting network route...")
+    inject_route(container_name, router_ip)
 
     print(f"""
 === Recreated: {project} ===
@@ -805,7 +914,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     print("=== Sandbox Status ===\n")
 
     print("── Infrastructure ──")
-    for svc in ["sandbox-gitea", "sandbox-review", "sandbox-proxy"]:
+    for svc in ["sandbox-gitea", "sandbox-review", "sandbox-router"]:
         r = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", svc],
                            capture_output=True, text=True)
         state = r.stdout.strip() if r.returncode == 0 else "not found"
@@ -861,7 +970,14 @@ def cmd_destroy(args: argparse.Namespace) -> None:
         workspace_dir = Path(cfg.projects_dir) / project
         if workspace_dir.is_dir():
             print("Removing workspace directory...")
-            shutil.rmtree(workspace_dir)
+            try:
+                shutil.rmtree(workspace_dir)
+            except PermissionError:
+                # Files created inside containers are owned by root
+                run(["docker", "run", "--rm", "-v", f"{workspace_dir.resolve()}:/mnt/ws",
+                     "alpine", "rm", "-rf", "/mnt/ws"], capture_output=True)
+                if workspace_dir.is_dir():
+                    workspace_dir.rmdir()
 
     # Remove per-project network
     print("Removing agent network...")

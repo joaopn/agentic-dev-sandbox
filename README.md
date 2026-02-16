@@ -11,13 +11,14 @@ inside of a container, but is isolated from any user data, credential or private
 graph LR
     GitHub -->|mirror| Gitea
     Agent -->|push| Gitea
-    Agent -->|proxy| Squid -->|internet| Web((Internet))
+    Agent -->|routed| Router -->|NAT| Web((Internet))
     Gitea -->|webhook| Review[Review Service]
 ```
 
 - **Gitea** mirrors your GitHub repos. The agent pushes to Gitea, never to GitHub.
-- **Agent containers** are per-project, disposable, and hardened. They connect through
-  a Squid proxy that blocks LAN access and restricts egress to HTTP/HTTPS/DNS by default.
+- **Agent containers** are per-project, disposable, and hardened. They sit on internal
+  Docker networks with no gateway — all external traffic is routed through a NAT router
+  container that blocks LAN access and restricts egress ports by default.
 - [Optional] **Review service** receives webhooks on agent pushes and posts automated security
   reviews (backdoors, exfiltration, dependency manipulation) as Gitea commit comments. 
 - You review diffs in the Gitea webui or your IDE using `git fetch` from Gitea and merge what you want.
@@ -49,20 +50,23 @@ git clone https://github.com/joaopn/agentic-dev-sandbox.git
 cd agentic-dev-sandbox
 
 cp .env.example .env
-# Edit .env: set GITHUB_PAT (and optionally reviewer settings, SANDBOX_CLAUDE_KEY if you want pre-configured Claude Code)
+# Edit .env: set GITHUB_PAT (and optionally reviewer settings, 
+# If you you want pre-configured Claude Code: SANDBOX_CLAUDE_KEY
 
-# 2. One-time setup (starts Gitea, review service, proxy)
+# 2. One-time setup (starts Gitea, review service, router)
 python sandbox.py setup
 
 # 3. Create a sandboxed project
-python sandbox.py create https://github.com/you/myproject --claude
+python sandbox.py create https://github.com/you/myproject
 
 # 4. Interact with the agent
 python sandbox.py attach myproject
 # You're in a byobu terminal session with Claude Code running
 # Give it a task, then F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
 
-# 5. Review the agent's work (from your real repo)
+# 5. Review the agent's work 
+## From the Gitea GUI: http://localhost:3000 (default port)
+## From your real repo
 cd ~/repos/myproject
 git remote add staging http://localhost:3000/agent-myproject/myproject.git
 python /path/to/sandbox.py review myproject feature-branch
@@ -78,7 +82,7 @@ git push origin main
 After a reboot or `docker compose down`, bring infrastructure back with:
 
 ```bash
-docker compose up -d           # Gitea, proxy, review service
+docker compose up -d           # Gitea, router, review service
 python sandbox.py start --all  # Agent containers
 ```
 
@@ -113,65 +117,6 @@ Create/recreate options:
   --ssh-port <port>              Host port for SSH (default: auto-assigned)
 ```
 
-## Network Isolation
-
-Each agent gets its own **internal Docker network** (`sandbox-net-{project}`) with
-no gateway — it cannot reach the internet or your LAN directly. The only path out
-is through a Squid proxy that bridges the agent's network and the external network.
-
-```mermaid
-graph LR
-    subgraph net-A ["sandbox-net-projectA (internal)"]
-        AgentA[Agent A]
-    end
-    subgraph net-B ["sandbox-net-projectB (internal)"]
-        AgentB[Agent B]
-    end
-    subgraph dev-sandbox ["dev-sandbox (has internet)"]
-        Proxy[Proxy / Squid]
-        Gitea
-        Review
-    end
-    AgentA -->|proxy only| Proxy -->|internet| Web((Internet))
-    AgentA -->|direct| Gitea
-    AgentB -->|proxy only| Proxy
-    AgentB -->|direct| Gitea
-```
-
-This means:
-- **Agents are isolated from each other** — each project gets its own internal
-  network. Agent A cannot reach Agent B, even if both are running simultaneously.
-- **All internet traffic is forced through the proxy** — even raw TCP connections
-  that ignore `HTTP_PROXY` simply fail (no route exists).
-- **LAN is unreachable** — internal networks have no gateway to RFC1918 addresses.
-  The proxy also blocks LAN destinations as defense-in-depth.
-- **Egress port filtering** (default): The proxy allows only TCP 80/443.
-  Use `--open-egress` to allow all destination ports through the proxy.
-- **Infrastructure access** — Gitea, proxy, and review service are connected to
-  each agent's network on demand, so the agent can reach them directly.
-
-## Security Model
-
-| Threat | Defense |
-|---|---|
-| Agent pushes to real GitHub | No GitHub credentials in container |
-| Agent reads host filesystem | Docker volume, no bind mount |
-| Agent reaches LAN/host | Internal Docker network (no gateway) + proxy LAN ACLs |
-| Agent exfiltrates via non-HTTPS | Internal network forces all traffic through proxy |
-| Poisoned code enters real repo | Gitea air gap + LLM security review + human review |
-| Symlinks/dotfiles auto-execute | Pre-merge safety checks flag them |
-| Agent modifies its own review | Separate API key, separate container |
-| Agent accesses other projects | Per-project Gitea user + per-project network isolation |
-| Compromised agent attacks others | Per-project networks prevent inter-agent communication |
-
-### Not prevented
-
-- Agent reading all code in its project (necessary for it to work)
-- HTTPS exfiltration to public endpoints (inherent to internet access)
-- LLM review missing a subtle backdoor (it's a filter, not a guarantee)
-- Container escape via unpatched kernel/runc CVE (same risk as any container)
-
-
 ## VS Code Remote-SSH
 
 Connect to agent containers via VS Code Remote-SSH for full IDE access:
@@ -180,7 +125,7 @@ Connect to agent containers via VS Code Remote-SSH for full IDE access:
 ssh agent@localhost -p <ssh-port>
 ```
 
-The SSH port is printed by `sandbox create`. Once connected, run `byobu attach`
+The SSH port is printed by `sandbox status`. Once connected, run `byobu attach`
 in the VS Code terminal to connect to the agent session.
 
 **Important**: Verify these VS Code settings are disabled before connecting:
@@ -199,7 +144,7 @@ endpoints live in `review/review-config.yaml`.
 
 | Variable | Description | Default |
 |---|---|---|
-| `REVIEWER_ENABLED` | Enable automated reviews (`true`/`false`) | `true` |
+| `REVIEWER_ENABLED` | Enable automated reviews (`true`/`false`) | `false` |
 | `REVIEWER_PROVIDER` | LLM provider: `anthropic`, `openai`, `openrouter`, `local` | `anthropic` |
 | `REVIEWER_API_KEY` | API key for the provider | (required unless local) |
 | `REVIEWER_MODEL` | Model name | (required) |
@@ -237,11 +182,11 @@ must contain a `{diff}` placeholder. Rebuild the review container after changes:
 ```
 agentic-dev-sandbox/
 ├── sandbox.py                    Main CLI (Python 3, stdlib only)
-├── docker-compose.yml            Gitea + review service + proxy
+├── docker-compose.yml            Gitea + review service + router
 ├── .env                          Config + secrets (gitignored)
 ├── .env.example                  Template
-├── container/
-│   └── CLAUDE.md                 Agent instructions (copied into each workspace)
+├── container/                    Files copied into each agent workspace
+│   └── CLAUDE.md                 Default agent instructions
 ├── agent/
 │   ├── Dockerfile                Agent image: python, node, git, byobu, sshd
 │   └── entrypoint.sh            Clone, configure git, start sshd + byobu
@@ -249,10 +194,87 @@ agentic-dev-sandbox/
 │   ├── Dockerfile                Review service image
 │   ├── review-server.py          Webhook listener: diff → LLM review → comment
 │   └── review-config.yaml        Prompt, provider endpoints, tunables
-└── proxy/
-    ├── Dockerfile                Squid proxy image
-    └── squid.conf                ACLs: port filtering, LAN blocking (defense-in-depth)
+└── router/
+    ├── Dockerfile                NAT router image (Alpine + iptables)
+    └── scripts/
+        ├── entrypoint.sh         NAT, firewall setup
+        ├── apply-rules.sh        Per-network iptables rules (idempotent)
+        └── remove-rules.sh       Cleanup rules for a subnet
 ```
+
+### `container/` directory
+
+Any files placed in `container/` are copied into each agent's workspace volume at `/workspace/[repo]`. 
+Use this to provide SSH authentication (in a `.ssh/` subfolder), config files, or custom instructions to every agent. 
+By default it ships with a `CLAUDE.md` containing baseline agent instructions.
+
+
+## Network Isolation
+
+Each agent gets its own **internal Docker network** (`sandbox-net-{project}`) with
+no gateway — it cannot reach the internet or your LAN directly. A NAT router container
+bridges the agent's internal network and the external network, providing native
+DNS, ICMP, and all-protocol support without any proxy configuration.
+
+```mermaid
+graph LR
+    subgraph net-A ["sandbox-net-projectA (internal)"]
+        AgentA[Agent A]
+    end
+    subgraph net-B ["sandbox-net-projectB (internal)"]
+        AgentB[Agent B]
+    end
+    subgraph dev-sandbox ["dev-sandbox (has internet)"]
+        Router[Router / NAT]
+        Gitea
+        Review
+    end
+    AgentA -->|routed| Router -->|NAT| Web((Internet))
+    AgentA -->|direct| Gitea
+    AgentB -->|routed| Router
+    AgentB -->|direct| Gitea
+```
+
+This means:
+- **Agents are isolated from each other** — each project gets its own internal
+  network. Agent A cannot reach Agent B, even if both are running simultaneously.
+- **All internet traffic is routed through the router** — the agent's default route
+  points to the router container. If the router is down, the agent has no external
+  connectivity (fail-closed).
+- **LAN is unreachable** — the router's iptables FORWARD chain drops all traffic
+  to RFC1918 destinations (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, link-local).
+- **Egress port filtering** (default): Only HTTP (80), HTTPS (443), DNS (53), and
+  ICMP are allowed. Use `--open-egress` to allow all destination ports.
+- **Native networking** — `ping`, `apt`, `pip`, `curl`, and any tool that expects
+  normal internet access work out of the box. No proxy configuration needed.
+- **Infrastructure access** — Gitea, router, and review service are connected to
+  each agent's network on demand, so the agent can reach them directly.
+- **Route injection** — the agent's default route is set via a throwaway privileged
+  container (`docker run --rm --privileged --network container:<agent> alpine ip route ...`).
+  The agent never receives NET_ADMIN and cannot modify its own routing.
+
+## Security Model
+
+| Threat | Defense |
+|---|---|
+| Agent pushes to real GitHub | No GitHub credentials in container |
+| Agent reads host filesystem | Docker volume, no bind mount |
+| Agent reaches LAN/host | Internal Docker network (no gateway) + router iptables drops RFC1918 |
+| Agent exfiltrates via non-standard ports | Router FORWARD chain allows only 80/443/DNS/ICMP (default) |
+| Agent modifies its own routing | No NET_ADMIN capability; route injected from a separate throwaway container |
+| Router goes down | Fail-closed: internal network has no gateway, agent loses all external connectivity |
+| Poisoned code enters real repo | Gitea air gap + LLM security review + human review |
+| Symlinks/dotfiles auto-execute | Pre-merge safety checks flag them |
+| Agent modifies its own review | Separate API key, separate container |
+| Agent accesses other projects | Per-project Gitea user + per-project network isolation |
+| Compromised agent attacks others | Per-project networks prevent inter-agent communication |
+
+### Not prevented
+
+- Agent reading all code in its project (necessary for it to work)
+- HTTPS exfiltration to public endpoints (inherent to internet access)
+- LLM review missing a subtle backdoor (it's a filter, not a guarantee)
+- Container escape via unpatched kernel/runc CVE (same risk as any container)
 
 ## FAQ
 

@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     byobu \
     openssh-server \
     jq \
+    iputils-ping \
     sudo \
     locales \
     && rm -rf /var/lib/apt/lists/*
