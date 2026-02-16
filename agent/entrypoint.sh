@@ -64,7 +64,7 @@ fi
 
 # --- Start byobu session ---
 echo "Starting byobu session 'main'..."
-byobu new-session -d -s main -c "${REPO_DIR}" "exec bash"
+byobu new-session -d -s main -c /home/agent "exec bash"
 
 echo "=== Agent container ready ==="
 echo "Repo: ${REPO_DIR}"

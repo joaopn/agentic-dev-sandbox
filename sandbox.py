@@ -664,19 +664,9 @@ def cmd_attach(args: argparse.Namespace) -> None:
         capture_output=True,
     )
     if r.returncode != 0:
-        repo = subprocess.run(
-            ["docker", "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", container],
-            capture_output=True, text=True,
-        )
-        repo_name = ""
-        for line in repo.stdout.splitlines():
-            if line.startswith("REPO_NAME="):
-                repo_name = line.split("=", 1)[1]
-                break
-        repo_dir = f"/home/agent/{repo_name}" if repo_name else "/home/agent"
         subprocess.run(
             ["docker", "exec", "-d", container,
-             "byobu", "new-session", "-d", "-s", "main", "-c", repo_dir, "exec bash"],
+             "byobu", "new-session", "-d", "-s", "main", "-c", "/home/agent", "exec bash"],
             capture_output=True,
         )
     print(f"Attaching to {args.project} byobu session (F6 to detach)...")
