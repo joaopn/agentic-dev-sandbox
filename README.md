@@ -30,10 +30,6 @@ graph LR
 - A read-only GitHub Personal Access Token (PAT). **The agent has no access to it, only Gitea**.
 
 Optional:
-- `SANDBOX_CLAUDE_KEY` — only needed with `--claude` flag (pre-installs and auto-starts Claude Code CLI
-  with the key baked in). Not needed if you use an IDE extension (e.g. Claude Code for VS Code via
-  Remote-SSH) or install the CLI manually inside the container. Named distinctly to avoid picking up
-  `ANTHROPIC_API_KEY` from the shell environment.
 - `REVIEWER_API_KEY` — needed if the automated security reviewer is enabled (supports Anthropic, OpenAI,
   OpenRouter, or local).
 
@@ -50,8 +46,7 @@ git clone https://github.com/joaopn/agentic-dev-sandbox.git
 cd agentic-dev-sandbox
 
 cp .env.example .env
-# Edit .env: set GITHUB_PAT (and optionally reviewer settings, 
-# If you you want pre-configured Claude Code: SANDBOX_CLAUDE_KEY
+# Edit .env: set GITHUB_PAT (and optionally reviewer settings)
 
 # 2. One-time setup (starts Gitea, review service, router)
 python sandbox.py setup
@@ -61,8 +56,8 @@ python sandbox.py create https://github.com/you/myproject --profile python
 
 # 4. Interact with the agent
 python sandbox.py attach myproject
-# You're in a byobu terminal session with Claude Code running
-# Give it a task, then F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
+# You're in a byobu terminal session inside the agent container.
+# F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
 
 # 5. Review the agent's work 
 ## From the Gitea GUI: http://localhost:3000 (default port)
@@ -109,7 +104,6 @@ Commands:
 Create/recreate options:
   --profile <name>               Agent image profile (required)
   --branch <name>                Branch to check out
-  --claude                       Install Claude Code CLI, auto-start in byobu
   --open-egress                  Allow all outbound ports (default: 80/443/DNS)
   --memory <limit>               Container memory limit (default: unlimited)
   --cpus <limit>                 Container CPU limit

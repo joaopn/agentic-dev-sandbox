@@ -26,7 +26,6 @@ class Config:
 
     def __init__(self):
         self.github_pat = ""
-        self.agent_api_key = ""
         self.reviewer_enabled = True
         self.reviewer_api_key = ""
         self.gitea_admin_token = ""
@@ -54,7 +53,6 @@ def load_config() -> Config:
             os.environ[key.strip()] = value.strip()
 
     cfg.github_pat = os.environ.get("GITHUB_PAT", "")
-    cfg.agent_api_key = os.environ.get("SANDBOX_CLAUDE_KEY", "")
     cfg.reviewer_enabled = os.environ.get("REVIEWER_ENABLED", "true").lower() != "false"
     cfg.reviewer_api_key = os.environ.get("REVIEWER_API_KEY", "")
     cfg.gitea_admin_token = os.environ.get("GITEA_ADMIN_TOKEN", "")
@@ -235,7 +233,6 @@ def build_agent_docker_args(
     ssh_port: int,
     agent_token: str,
     gitea_user: str,
-    install_claude: bool,
     ssh_pass: str,
     dns_servers: list[str],
     memory: str,
@@ -244,7 +241,6 @@ def build_agent_docker_args(
     branch: str = "",
     cpus: str = "",
     gpus: str = "",
-    agent_api_key: str = "",
 ) -> list[str]:
     """Build the docker run argument list. Shared by create and recreate."""
     dns_args = []
@@ -262,7 +258,6 @@ def build_agent_docker_args(
         "-e", f"GITEA_TOKEN={agent_token}",
         "-e", f"GITEA_USER={gitea_user}",
         "-e", f"REPO_NAME={project}",
-        "-e", f"INSTALL_CLAUDE={'1' if install_claude else '0'}",
         "-e", f"SSH_PASSWORD={ssh_pass}",
         # Runtime hardening
         "--cap-drop=ALL",
@@ -281,8 +276,6 @@ def build_agent_docker_args(
         args += [f"--cpus={cpus}"]
     if gpus:
         args += [f"--gpus={gpus}"]
-    if install_claude and agent_api_key:
-        args += ["-e", f"ANTHROPIC_API_KEY={agent_api_key}"]
     args.append(image)
     return args
 
@@ -649,10 +642,10 @@ def cmd_create(args: argparse.Namespace) -> None:
     docker_args = build_agent_docker_args(
         container_name=container_name, project=project, network=agent_network,
         volume_name=volume_name, ssh_port=ssh_port, agent_token=agent_token,
-        gitea_user=gitea_user, install_claude=args.claude, ssh_pass=ssh_pass,
+        gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or "", agent_api_key=cfg.agent_api_key,
+        gpus=args.gpus or "",
     )
     run_check(["docker", *docker_args])
 
@@ -919,10 +912,10 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     docker_args = build_agent_docker_args(
         container_name=container_name, project=project, network=agent_network,
         volume_name=volume_name, ssh_port=ssh_port, agent_token=agent_token,
-        gitea_user=gitea_user, install_claude=args.claude, ssh_pass=ssh_pass,
+        gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or "", agent_api_key=cfg.agent_api_key,
+        gpus=args.gpus or "",
     )
 
     print("Starting new container...")
@@ -1035,7 +1028,6 @@ def build_parser() -> argparse.ArgumentParser:
     # Shared flags for create/recreate
     container_flags = argparse.ArgumentParser(add_help=False)
     container_flags.add_argument("--branch", default="")
-    container_flags.add_argument("--claude", action="store_true")
     container_flags.add_argument("--open-egress", action="store_true")
     container_flags.add_argument("--memory", default="")
     container_flags.add_argument("--cpus", default="")

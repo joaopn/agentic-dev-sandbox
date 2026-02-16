@@ -7,8 +7,6 @@
 #   GITEA_USER       — Per-project Gitea user (e.g., agent-myproject)
 #   REPO_NAME        — Repository name
 #   REPO_BRANCH      — Branch to check out (optional, defaults to repo default)
-#   INSTALL_CLAUDE   — If "1", install Claude Code CLI and auto-start it
-#   ANTHROPIC_API_KEY — API key for Claude Code (if INSTALL_CLAUDE=1)
 #   SSH_PASSWORD     — Password for SSH access
 
 set -euo pipefail
@@ -64,22 +62,9 @@ if [[ -n "${REPO_BRANCH:-}" ]]; then
     git checkout "${REPO_BRANCH}" 2>/dev/null || git checkout -b "${REPO_BRANCH}"
 fi
 
-# --- Install Claude Code CLI if requested ---
-if [[ "${INSTALL_CLAUDE:-0}" == "1" ]]; then
-    echo "Installing Claude Code CLI..."
-    sudo npm install -g @anthropic-ai/claude-code 2>&1 | tail -1
-    echo "Claude Code installed"
-fi
-
 # --- Start byobu session ---
 echo "Starting byobu session 'main'..."
-
-BYOBU_CMD="cd ${REPO_DIR}"
-if [[ "${INSTALL_CLAUDE:-0}" == "1" ]]; then
-    BYOBU_CMD="${BYOBU_CMD} && claude"
-fi
-
-byobu new-session -d -s main -c "${REPO_DIR}" "${BYOBU_CMD}; exec bash"
+byobu new-session -d -s main -c "${REPO_DIR}" "exec bash"
 
 echo "=== Agent container ready ==="
 echo "Repo: ${REPO_DIR}"
