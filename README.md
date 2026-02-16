@@ -99,7 +99,7 @@ Commands:
   review <project> <branch>      Fetch, security review, safety checks, diffstat
   recreate <project> [opts]      New container + fresh token, keeps volume
   status                         List all projects, containers, ports
-  destroy <project>              Remove container, volume, Gitea user
+  destroy <project>              Remove container, volume, Gitea user + fork
   logs <project>                 Tail container logs
 
 Create/recreate options:

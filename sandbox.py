@@ -1053,7 +1053,7 @@ def cmd_destroy(args: argparse.Namespace) -> None:
         print(f"Removing Gitea user {gitea_user}...")
         gitea_api_ok(cfg, "DELETE", f"/admin/users/{gitea_user}?purge=true")
 
-    print(f"Destroyed. Gitea mirror (sandbox-admin/{project}) and review comments preserved.")
+    print(f"Destroyed. Gitea mirror (sandbox-admin/{project}) preserved.")
 
 
 def cmd_logs(args: argparse.Namespace) -> None:
@@ -1114,7 +1114,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="List all projects and containers").set_defaults(func=cmd_status)
 
-    p = sub.add_parser("destroy", help="Remove container, volume, Gitea user")
+    p = sub.add_parser("destroy", help="Remove container, volume, Gitea user + fork")
     p.add_argument("project")
     p.set_defaults(func=cmd_destroy)
 
