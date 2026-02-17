@@ -29,6 +29,7 @@ class Config:
         self.reviewer_enabled = True
         self.reviewer_api_key = ""
         self.gitea_admin_token = ""
+        self.gitea_admin_password = ""
         self.projects_dir = ""
         self.gitea_port = "3000"
         self.default_memory = ""
@@ -56,6 +57,7 @@ def load_config() -> Config:
     cfg.reviewer_enabled = os.environ.get("REVIEWER_ENABLED", "true").lower() != "false"
     cfg.reviewer_api_key = os.environ.get("REVIEWER_API_KEY", "")
     cfg.gitea_admin_token = os.environ.get("GITEA_ADMIN_TOKEN", "")
+    cfg.gitea_admin_password = os.environ.get("GITEA_ADMIN_PASSWORD", "")
     cfg.gitea_port = os.environ.get("GITEA_PORT", "3000")
     cfg.projects_dir = os.environ.get("PROJECTS_DIR", "./container_volumes/")
     dns = os.environ.get("SANDBOX_DNS", "")
@@ -497,11 +499,14 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
         cfg.gitea_admin_token = token
 
+        cfg.gitea_admin_password = admin_pass
+
         # Append to .env
         env_file = SCRIPT_DIR / ".env"
         with env_file.open("a") as f:
+            f.write(f"\nGITEA_ADMIN_PASSWORD={admin_pass}")
             f.write(f"\nGITEA_ADMIN_TOKEN={token}\n")
-        print("Gitea admin token saved to .env")
+        print("Gitea admin credentials saved to .env")
 
         # Restart review service to pick up the token (if enabled)
         if cfg.reviewer_enabled:
@@ -512,10 +517,9 @@ def cmd_setup(args: argparse.Namespace) -> None:
     print(f"""
 === Setup Complete ===
 Gitea UI:      http://localhost:{cfg.gitea_port}/explore/repos?sort=newest&type=fork
+Gitea login:   sandbox-admin / {cfg.gitea_admin_password}
 Projects dir:  {cfg.projects_dir}
-
-Tip: Add sandbox to your PATH:
-  ln -sf {SCRIPT_DIR / 'sandbox.py'} ~/.local/bin/sandbox""")
+""")
 
 
 def cmd_create(args: argparse.Namespace) -> None:
@@ -578,11 +582,19 @@ def cmd_create(args: argparse.Namespace) -> None:
             die(f"Failed to fork repo to {gitea_user}: {e}")
         time.sleep(2)
 
-    # Label and grant admin read access to the agent fork (for browsing in Gitea webui)
+    # Enable repo features and grant admin access to the agent fork (for Gitea webui)
+    repo_features = {
+        "has_issues": True,
+        "has_wiki": True,
+        "has_pull_requests": True,
+        "has_projects": True,
+    }
     gitea_api_ok(cfg, "PATCH", f"/repos/{gitea_user}/{project}",
-                 {"description": "Agent workspace"})
+                 {"description": "Agent workspace", **repo_features})
+    gitea_api_ok(cfg, "PATCH", f"/repos/sandbox-admin/{project}", repo_features)
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-admin",
-                 {"permission": "read"})
+                 {"permission": "admin"})
+    gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/subscription")
 
     # 3. Generate fresh Gitea token
     print(f"Generating Gitea token for {gitea_user}...")
@@ -685,6 +697,7 @@ def cmd_create(args: argparse.Namespace) -> None:
 Attach:    sandbox attach {project}
 SSH:       ssh agent@localhost -p {ssh_port}  (password: {ssh_pass})
 Gitea:     http://localhost:{cfg.gitea_port}/{gitea_user}/{project}
+Gitea login: sandbox-admin / {cfg.gitea_admin_password}
 Egress:    {egress_label}
 
 To review agent work from your real repo:
@@ -1016,6 +1029,9 @@ def cmd_status(args: argparse.Namespace) -> None:
                            capture_output=True, text=True)
         state = r.stdout.strip() if r.returncode == 0 else "not found"
         print(f"  {svc:<20s} {state}")
+    if cfg.gitea_admin_password:
+        print(f"\n  Gitea UI:    http://localhost:{cfg.gitea_port}")
+        print(f"  Gitea login: sandbox-admin / {cfg.gitea_admin_password}")
 
     print("\n── Agent Containers ──")
     containers = get_agent_containers()
@@ -1155,7 +1171,9 @@ def cmd_unsetup(args: argparse.Namespace) -> None:
     env_file = SCRIPT_DIR / ".env"
     if env_file.exists():
         lines = env_file.read_text().splitlines()
-        new_lines = [l for l in lines if not l.strip().startswith("GITEA_ADMIN_TOKEN=")]
+        new_lines = [l for l in lines
+                     if not l.strip().startswith("GITEA_ADMIN_TOKEN=")
+                     and not l.strip().startswith("GITEA_ADMIN_PASSWORD=")]
         if len(new_lines) != len(lines):
             env_file.write_text("\n".join(new_lines) + "\n")
             print("Removed GITEA_ADMIN_TOKEN from .env")
