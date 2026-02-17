@@ -7,8 +7,8 @@
 # open a PR, merge, etc.
 #
 # Usage:
-#   ./repo-watch.sh              # poll every 60s (default)
-#   POLL_INTERVAL=30 ./repo-watch.sh   # poll every 30s
+#   ./repo-watch.sh              # poll every 30s (default)
+#   POLL_INTERVAL=60 ./repo-watch.sh   # poll every 60s
 #
 # Prerequisites:
 #   - Claude Code installed and authenticated (`claude` must work)
@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-POLL_INTERVAL="${POLL_INTERVAL:-60}"
+POLL_INTERVAL="${POLL_INTERVAL:-30}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 REPO_DIR="${HOME}/${REPO_NAME}"
 API="${GITEA_URL}/api/v1"
@@ -73,7 +73,7 @@ ${body}
 
 ${formatted_comments:-_No comments yet._}
 ${extra_context}
-### Your open pull requests
+### Related pull requests
 
 ${open_prs:-_None._}
 
@@ -85,9 +85,19 @@ CONTEXT
 
     log "invoking claude for ${item_type} #${number}..."
     local rc=0
-    (cd "$REPO_DIR" && claude -p "$(cat "$task_file")") || rc=$?
+    local claude_output
+    claude_output=$( (cd "$REPO_DIR" && claude -p "$(cat "$task_file")" --output-format json) ) || rc=$?
 
     rm -f "$task_file"
+
+    # Parse and display result + stats
+    if [[ -n "$claude_output" ]]; then
+        echo "$claude_output" | jq -r '
+            .result,
+            "",
+            "\u001b[30;47m Time: \(.duration_ms/1000)s | In: \(.usage.input_tokens) | Out: \(.usage.output_tokens) | Cached: \(.usage.cache_read_input_tokens) | Cost: $\(.total_cost_usd) \u001b[0m"
+        ' 2>/dev/null || echo "$claude_output"
+    fi
 
     if [[ "$rc" -ne 0 ]]; then
         log "claude exited with error (code ${rc}) for ${item_type} #${number}"
@@ -185,6 +195,8 @@ mkdir -p "$FAIL_DIR"
 log "repo-watch: monitoring ${REPO_PATH} (poll every ${POLL_INTERVAL}s)"
 log "repo-watch: press Ctrl+C to stop"
 
+was_idle=false
+
 while true; do
     handled=false
 
@@ -230,12 +242,13 @@ while true; do
 
         formatted_comments=$(format_comments "$comments_json")
 
-        # Fetch open PRs by agent (for context)
-        open_prs=$(gitea GET "/repos/${REPO_PATH}/pulls?state=open" \
-            | jq -r '.[] | "- #\(.number) \(.title) (branch: \(.head.ref))"')
+        # Fetch only PRs related to this issue (body mentions #N)
+        related_prs=$(gitea GET "/repos/${REPO_PATH}/pulls?state=open" \
+            | jq -r --arg issue "#${number}" \
+            '.[] | select(.body | test($issue + "\\b")) | "- #\(.number) \(.title) (branch: \(.head.ref))"')
 
         invoke_agent "$number" "$title" "$body" "$author" "$labels" "$local_type" \
-            "$formatted_comments" "$open_prs" || true
+            "$formatted_comments" "$related_prs" || true
 
         log "done with ${local_type} #${number}"
         handled=true
@@ -303,8 +316,9 @@ while true; do
                 --arg agent "$GITEA_USER" \
                 '.[] | select(.user.login != $agent) | "**Review by \(.user.login)** (\(.submitted_at)) — \(.state):\n\(.body // "_No summary._")\n---"')
 
-            open_prs=$(gitea GET "/repos/${REPO_PATH}/pulls?state=open" \
-                | jq -r '.[] | "- #\(.number) \(.title) (branch: \(.head.ref))"')
+            related_prs=$(gitea GET "/repos/${REPO_PATH}/pulls?state=open" \
+                | jq -r --arg issue "#${pr_number}" \
+                '.[] | select(.body | test($issue + "\\b")) | "- #\(.number) \(.title) (branch: \(.head.ref))"')
 
             extra="### PR reviews
 
@@ -313,7 +327,7 @@ ${review_context}
 "
 
             invoke_agent "$pr_number" "$pr_title" "$pr_body" "$pr_author" "$pr_labels" "PR" \
-                "$formatted_comments" "$open_prs" "$extra" || true
+                "$formatted_comments" "$related_prs" "$extra" || true
 
             log "done with PR #${pr_number}"
             handled=true
@@ -322,7 +336,12 @@ ${review_context}
     fi
 
     if [[ "$handled" == "false" ]]; then
-        log "no pending items, sleeping ${POLL_INTERVAL}s"
+        if [[ "$was_idle" == "false" ]]; then
+            log "no pending items, monitoring every ${POLL_INTERVAL}s"
+            was_idle=true
+        fi
+    else
+        was_idle=false
     fi
 
     sleep "$POLL_INTERVAL"
