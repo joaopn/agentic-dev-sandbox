@@ -651,7 +651,7 @@ def cmd_create(args: argparse.Namespace) -> None:
     if container_src.is_dir():
         run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent",
                     "-v", f"{container_src}:/src:ro", "alpine",
-                    "sh", "-c", "cp /src/* /home/agent/ && chown -R 1000:1000 /home/agent"])
+                    "sh", "-c", "cp /src/* /home/agent/ && chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:1000 /home/agent"])
     else:
         run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
                     "sh", "-c", "chown -R 1000:1000 /home/agent"])

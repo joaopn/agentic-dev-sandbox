@@ -66,3 +66,11 @@ git push origin agent/my-feature
 - Keep changes focused. One branch per task.
 - If unsure about an approach, create the branch, push what you have, and note
   the uncertainty in the commit message. The user will review.
+
+## Gitea API
+
+Your Gitea API token is in `$GITEA_TOKEN`. Base URL: `$GITEA_URL/api/v1`.
+Repo path: `$GITEA_USER/$REPO_NAME`.
+
+You can interact with issues and pull requests via curl. See `~/repo-watch-prompt.md`
+for API examples and workflow guidelines.
