@@ -28,15 +28,15 @@ graph LR
 
 - Docker with Compose v2 (`docker compose`)
 - Python 3.10+, `git`
-- A read-only GitHub Personal Access Token (PAT). **The agent has no access to it, only Gitea**.
 
 Optional:
+- `GITHUB_PAT`: A read-only GitHub Personal Access Token (PAT), **only if mirroring private repos**. The agent has no access to it — only Gitea uses it.
 - `REVIEWER_API_KEY` — needed if the automated security reviewer is enabled (supports Anthropic, OpenAI,
   OpenRouter, or local).
 
-To generate the Github PAT:
+To generate the Github PAT (only needed for private repos):
   1. Go to https://github.com/settings/personal-access-tokens/new
-  2. In Repository access, select the target repos (or all). 
+  2. In Repository access, select the target repos (or all).
   3. In Permissions, click on Add Permissions and add **Contents**. Ensure it has **Access: Read-only**.
 
 ## Quick Start
@@ -47,7 +47,7 @@ git clone https://github.com/joaopn/agentic-dev-sandbox.git
 cd agentic-dev-sandbox
 
 cp .env.example .env
-# Edit .env: set GITHUB_PAT (and optionally reviewer settings)
+# Edit .env: set GITHUB_PAT for private repos (optional for public), reviewer settings, etc.
 
 # 2. One-time setup (starts Gitea, review service, router)
 python sandbox.py setup
@@ -83,6 +83,17 @@ docker compose up -d           # Gitea, router, review service
 python sandbox.py start --all  # Agent containers
 ```
 
+To fully tear down everything (all agent containers, volumes, networks, and infrastructure):
+
+```bash
+python sandbox.py unsetup
+```
+
+This removes all agent containers and their workspace volumes, stops and removes Gitea/router/review
+containers and their Docker volumes, cleans up per-project networks, and removes the generated
+`GITEA_ADMIN_TOKEN` from `.env`. Your other `.env` settings are preserved — run `sandbox setup` to
+start fresh.
+
 ## CLI Reference
 
 ```
@@ -90,6 +101,7 @@ sandbox <command> [options]
 
 Commands:
   setup                          One-time infrastructure setup
+  unsetup                        Tear down everything (containers, volumes, networks, Gitea data)
   create <github-url> [opts]     Mirror repo, spin up agent container
   attach <project>               Attach to agent's byobu session
   ssh                            Show SSH connection info (ports + passwords)

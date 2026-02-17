@@ -441,12 +441,15 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     print("=== Sandbox Setup ===")
 
-    required = [("GITHUB_PAT", cfg.github_pat)]
+    required = []
     if cfg.reviewer_enabled:
         required.append(("REVIEWER_API_KEY", cfg.reviewer_api_key))
     for name, value in required:
         if not value:
             die(f"{name} not set in .env")
+
+    if not cfg.github_pat:
+        print("Note: GITHUB_PAT not set — mirroring will only work for public repos.")
 
     # Create projects directory (if configured)
     if cfg.projects_dir:
@@ -530,14 +533,16 @@ def cmd_create(args: argparse.Namespace) -> None:
         print("Mirror already exists, triggering sync...")
         gitea_api_ok(cfg, "POST", f"/repos/sandbox-admin/{project}/mirror-sync")
     else:
-        gitea_api(cfg, "POST", "/repos/migrate", {
+        migrate_payload = {
             "clone_addr": args.github_url,
             "repo_name": project,
             "repo_owner": "sandbox-admin",
             "mirror": True,
-            "auth_token": cfg.github_pat,
             "service": "github",
-        })
+        }
+        if cfg.github_pat:
+            migrate_payload["auth_token"] = cfg.github_pat
+        gitea_api(cfg, "POST", "/repos/migrate", migrate_payload)
         print("Mirror created. Waiting for initial sync...")
         time.sleep(5)
     gitea_api_ok(cfg, "PATCH", f"/repos/sandbox-admin/{project}",
@@ -1089,6 +1094,79 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     print(f"Destroyed. Gitea mirror (sandbox-admin/{project}) preserved.")
 
 
+def cmd_unsetup(args: argparse.Namespace) -> None:
+    cfg = load_config()
+
+    containers = get_agent_containers()
+    projects = [n.removeprefix("sandbox-agent-") for n in containers]
+
+    print("=== Sandbox Teardown ===\n")
+    print("This will permanently destroy:")
+    if projects:
+        for p in projects:
+            print(f"  - Agent container, volume, and network for: {p}")
+    else:
+        print("  - (no agent containers found)")
+    print("  - Gitea server and all mirrored/forked repos")
+    print("  - Router and review service")
+    print("  - All associated Docker volumes\n")
+
+    confirm = input("Type 'yes' to confirm: ").strip()
+    if confirm != "yes":
+        print("Aborted.")
+        return
+
+    print("\n=== Tearing down sandbox infrastructure ===\n")
+
+    # 1. Destroy all agent containers, volumes, networks, and Gitea users
+    if containers:
+        print("── Destroying all agent projects ──")
+        for name in containers:
+            project = name.removeprefix("sandbox-agent-")
+            gitea_user = f"agent-{project}"
+            volume_name = f"sandbox-{project}"
+
+            print(f"  Removing {name}...")
+            run(["docker", "rm", "-f", name], capture_output=True)
+
+            if run_quiet(["docker", "volume", "inspect", volume_name]):
+                run(["docker", "volume", "rm", volume_name], capture_output=True)
+
+            if cfg.projects_dir:
+                workspace_dir = Path(cfg.projects_dir) / project
+                if workspace_dir.is_dir():
+                    try:
+                        shutil.rmtree(workspace_dir)
+                    except PermissionError:
+                        run(["docker", "run", "--rm", "-v", f"{workspace_dir.resolve()}:/mnt/ws",
+                             "alpine", "rm", "-rf", "/mnt/ws"], capture_output=True)
+                        if workspace_dir.is_dir():
+                            workspace_dir.rmdir()
+
+            remove_agent_network(project)
+    else:
+        print("No agent containers found.")
+
+    # 2. Stop and remove infrastructure containers + volumes
+    print("\n── Removing infrastructure ──")
+    docker_compose("down", "-v")
+
+    # 3. Remove GITEA_ADMIN_TOKEN from .env
+    env_file = SCRIPT_DIR / ".env"
+    if env_file.exists():
+        lines = env_file.read_text().splitlines()
+        new_lines = [l for l in lines if not l.strip().startswith("GITEA_ADMIN_TOKEN=")]
+        if len(new_lines) != len(lines):
+            env_file.write_text("\n".join(new_lines) + "\n")
+            print("Removed GITEA_ADMIN_TOKEN from .env")
+
+    print("""
+=== Teardown complete ===
+All containers, volumes, networks, and Gitea data have been removed.
+Your .env configuration (except GITEA_ADMIN_TOKEN) is preserved.
+Run 'sandbox setup' to start fresh.""")
+
+
 def cmd_logs(args: argparse.Namespace) -> None:
     container = f"sandbox-agent-{args.project}"
     os.execvp("docker", ["docker", "logs", "-f", container])
@@ -1113,6 +1191,7 @@ def build_parser() -> argparse.ArgumentParser:
     container_flags.add_argument("--claude-yolo", action="store_true")
 
     sub.add_parser("setup", help="One-time infrastructure setup").set_defaults(func=cmd_setup)
+    sub.add_parser("unsetup", help="Tear down all infrastructure, containers, and volumes").set_defaults(func=cmd_unsetup)
 
     p = sub.add_parser("create", help="Mirror repo and spin up agent container",
                        parents=[container_flags])
