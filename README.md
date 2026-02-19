@@ -9,16 +9,16 @@ A simple, but opinionated, sandboxed development environment for agentic LLMs. T
 ```mermaid
 graph LR
     Human -->|push| GitHub
-    Human <-->|fetch / add issues| Gitea
+    Human <-->|fetch & add issues| Gitea
     GitHub -->|mirror| Gitea
-    Agent -->|push| Gitea
+    Agent <-->|push & get issues| Gitea
     Agent -->|routed| Router -->|NAT| Web((Internet))
 ```
 
 - **Local Gitea** mirrors your GitHub repos. The agent pushes to Gitea, never to GitHub
 - **Agent containers** are per-project, disposable, and hardened. They can't access your LAN
   - [Optional] **Repo Watch** has the agent monitoring Gitea Issues and working on them automatically
-  - [Optional] **Review service** posts automated security reviews (backdoors, exfiltration, dependency manipulation) as Gitea commit comments
+  - [Optional] **Review service** posts automated security reviews (backdoors, exfiltration, dependency manipulation) on `/security` command
 - You review code in the Gitea webui or your IDE using `git fetch` from Gitea
 - You merge what you want back to GitHub (human-in-the-loop)
 
@@ -26,7 +26,7 @@ See [SECURITY.md](docs/SECURITY.md) for the full threat model and network isolat
 
 ## Repo Watch
 
-The agent can monitor its Gitea repo for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
+The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
 
 <br>
 <p align="center">
@@ -34,7 +34,7 @@ The agent can monitor its Gitea repo for issues and PR activity. You open an iss
 </p>
 
 
-To activate:
+To use:
 ```bash
 # Inside the agent container (after sandbox attach)
 claude                # authenticate first
@@ -44,14 +44,31 @@ claude                # authenticate first
 
 See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
 
+## Reviewer
+
+An isolated bot (`bot-security`) can review PRs for security issues on command. Comment `/security` on any PR in Gitea to trigger a review. The bot posts findings as a PR comment.
+
+<br>
+<p align="center">
+  <img src="docs/bot.png" width="600" alt="Repo Watch example">
+</p>
+
+To use:
+```bash
+python sandbox.py review setup   # configure provider, key, model (one-time)
+python sandbox.py review on      # start after reboot
+```
+
+See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and customization.
+
 ## Prerequisites
 
 - Docker with Compose v2 (`docker compose`)
-- Python 3.10+, `git`
+- Python 3.10+
 
 Optional:
-- `GITHUB_PAT` — A read-only GitHub Personal Access Token (PAT), **only if mirroring private repos**. The agent has no access to it — only Gitea uses it.
-- `REVIEWER_API_KEY` — needed if the automated security reviewer is enabled (supports Anthropic, OpenAI, OpenRouter, or local).
+- `GITHUB_PAT` — A read-only GitHub Personal Access Token (PAT), **only if mirroring private repos**. Only Gitea sees it.
+- `REVIEWER_API_KEY` — an LLM API key needed if the optional `bot-security` is enabled (supports Anthropic, OpenAI, OpenRouter, or local). Only the reviewer service sees it.
 
 To generate the GitHub PAT:
   1. Go to https://github.com/settings/personal-access-tokens/new
@@ -111,7 +128,9 @@ Commands:
   pause <project|--all>          Freeze container(s) in place (cgroup)
   unpause <project|--all>        Resume frozen container(s)
   sync <project>                 Trigger Gitea mirror sync from GitHub
-  review <project> <branch>      Fetch, security review, safety checks, diffstat
+  review show <project> <branch>  Fetch, security review, safety checks, diffstat
+  review setup                   Configure and start the review service
+  review on / off                Toggle reviewer without re-prompting
   recreate <project> [opts]      New container + fresh token, keeps volume
   status                         List all projects, containers, ports
   destroy <project>              Remove container, volume, Gitea user + fork

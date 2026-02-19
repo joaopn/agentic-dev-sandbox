@@ -66,3 +66,24 @@ This means:
 - **Route injection** — the agent's default route is set via a throwaway privileged
   container (`docker run --rm --privileged --network container:<agent> alpine ip route ...`).
   The agent never receives NET_ADMIN and cannot modify its own routing.
+
+## Security FAQ
+
+### Why not use dev containers?
+
+Dev containers were designed to give you a reproducible dev environment, not to isolate an untrusted agent.
+By default they bind-mount your project directory (read-write), share the host network, and have no egress filtering.
+The agent can read your `.git/config`, reach `localhost` services, and access anything in the mounted tree.
+
+### Can't I just harden the dev container?
+
+The IDE works against you.
+VS Code (for instance) automatically forwards your SSH agent, git credentials, and GPG keys into the container.
+Extensions run with full container permissions.
+An update can re-enable unhardened defaults.
+
+### Why not use the agent's own Claude Code for reviews instead of a separate API key?
+
+The review service runs in a separate container with no access to the agent's filesystem, `CLAUDE.md`, or `.claude/` directory. It receives only the raw diff and a security prompt.
+This trust-domain separation matters because a compromised agent can poison its own context — writing invisible Unicode instructions into `CLAUDE.md`, planting files with prompt-injection payloads, or modifying `~/.claude/settings.json` — and any Claude Code invocation inside the same container would inherit that poisoned state. 
+A self-review is not an independent review.

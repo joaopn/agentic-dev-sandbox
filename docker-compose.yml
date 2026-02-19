@@ -12,6 +12,7 @@ services:
       - GITEA__service__REQUIRE_SIGNIN_VIEW=false
       - GITEA__mirror__ENABLED=true
       - GITEA__mirror__DEFAULT_INTERVAL=${MIRROR_INTERVAL:-8h}
+      - GITEA__webhook__ALLOWED_HOST_LIST=sandbox-review
       - GITEA__repository__DEFAULT_BRANCH=main
       # Disable features we don't need
       - GITEA__openid__ENABLE_OPENID_SIGNIN=false
@@ -33,13 +34,14 @@ services:
   review:
     build: ./review
     container_name: sandbox-review
+    profiles: ["review"]
     environment:
       - REVIEWER_PROVIDER=${REVIEWER_PROVIDER:-anthropic}
       - REVIEWER_API_KEY=${REVIEWER_API_KEY}
       - REVIEWER_MODEL=${REVIEWER_MODEL:-}
       - REVIEWER_ENDPOINT=${REVIEWER_ENDPOINT:-}
       - GITEA_URL=http://sandbox-gitea:3000
-      - GITEA_ADMIN_TOKEN=${GITEA_ADMIN_TOKEN}
+      - BOT_SECURITY_TOKEN=${BOT_SECURITY_TOKEN}
     networks:
       - dev-sandbox
     depends_on:

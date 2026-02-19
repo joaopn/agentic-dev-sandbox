@@ -2,8 +2,9 @@
 """
 review-server.py — Gitea webhook listener that posts LLM-generated security reviews.
 
-Receives push webhooks from Gitea, fetches the diff, sends it to an LLM for
-security-focused review, and posts findings as commit comments on Gitea.
+Receives issue_comment webhooks from Gitea and dispatches slash commands.
+Currently supports /security — fetches the full PR diff, sends it to an LLM
+for security-focused review, and posts findings as a PR comment.
 
 Supports multiple LLM providers via a unified interface:
   - anthropic:   Anthropic Messages API (default)
@@ -12,7 +13,7 @@ Supports multiple LLM providers via a unified interface:
   - local:       Any OpenAI-compatible local server (e.g., vLLM, llama.cpp)
 
 Configuration is split between env vars (secrets, runtime) and review-config.yaml
-(prompt, provider endpoints). Model is always set via REVIEWER_MODEL env var.
+(per-command prompts, provider endpoints). Model is always set via REVIEWER_MODEL env var.
 
 Environment variables:
     REVIEWER_PROVIDER — LLM provider: anthropic, openai, openrouter, local
@@ -20,7 +21,7 @@ Environment variables:
     REVIEWER_MODEL    — Model name (required)
     REVIEWER_ENDPOINT — Custom API endpoint (overrides config, required for local)
     GITEA_URL         — Internal Gitea URL (e.g., http://sandbox-gitea:3000)
-    GITEA_ADMIN_TOKEN — Gitea admin API token (for reading diffs and posting comments)
+    BOT_SECURITY_TOKEN — Gitea token for bot-security user (reading diffs + posting comments)
 """
 
 import json
@@ -50,7 +51,8 @@ def load_yaml_config(path: Path) -> dict:
     Handles:
       - top-level scalar keys (key: value)
       - top-level mapping keys with indented children (providers:)
-      - multi-line block scalars (prompt: |)
+      - nested block scalars within mappings (prompts: security: |)
+      - top-level block scalars (key: |)
       - comments (#)
     """
     config: dict = {}
@@ -93,7 +95,7 @@ def load_yaml_config(path: Path) -> dict:
                 continue
 
             if not value:
-                # Mapping — collect indented key: value pairs
+                # Mapping — collect indented key: value pairs (including nested block scalars)
                 mapping = {}
                 i += 1
                 while i < len(lines):
@@ -106,7 +108,30 @@ def load_yaml_config(path: Path) -> dict:
                         break
                     if ":" in mstripped:
                         mkey, _, mval = mstripped.partition(":")
-                        mapping[mkey.strip()] = mval.strip()
+                        mkey = mkey.strip()
+                        mval = mval.strip()
+                        if mval == "|":
+                            # Nested block scalar
+                            block_lines = []
+                            base_indent = len(mline) - len(mline.lstrip())
+                            i += 1
+                            while i < len(lines):
+                                bline = lines[i]
+                                if bline.strip() and not bline[0].isspace():
+                                    break
+                                # Stop if line is at same or lower indent (sibling/parent key)
+                                if bline.strip() and (len(bline) - len(bline.lstrip())) <= base_indent:
+                                    break
+                                block_lines.append(bline)
+                                i += 1
+                            non_empty = [bl for bl in block_lines if bl.strip()]
+                            if non_empty:
+                                indent = min(len(bl) - len(bl.lstrip()) for bl in non_empty)
+                                block_lines = [bl[indent:] if len(bl) > indent else "" for bl in block_lines]
+                            mapping[mkey] = "\n".join(block_lines).rstrip("\n") + "\n"
+                            continue
+                        else:
+                            mapping[mkey] = mval
                     i += 1
                 config[key] = mapping
                 continue
@@ -123,7 +148,7 @@ YAML_CONFIG = load_yaml_config(CONFIG_PATH)
 # ─── Resolved configuration ──────────────────────────────────────────────────
 
 GITEA_URL = os.environ.get("GITEA_URL", "http://sandbox-gitea:3000")
-GITEA_TOKEN = os.environ.get("GITEA_ADMIN_TOKEN", "")
+GITEA_TOKEN = os.environ.get("BOT_SECURITY_TOKEN", "")
 REVIEWER_PROVIDER = os.environ.get("REVIEWER_PROVIDER", "anthropic").lower()
 REVIEWER_API_KEY = os.environ.get("REVIEWER_API_KEY", "")
 REVIEWER_MODEL = os.environ.get("REVIEWER_MODEL", "")
@@ -132,7 +157,8 @@ LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8080"))
 
 # From yaml
 PROVIDER_ENDPOINTS: dict = YAML_CONFIG.get("providers", {})
-REVIEW_PROMPT: str = YAML_CONFIG.get("prompt", "Review this diff for security issues:\n\n{diff}\n")
+PROMPTS: dict = YAML_CONFIG.get("prompts", {})
+DEFAULT_PROMPT: str = "Review this diff for security issues:\n\n{diff}\n"
 MAX_DIFF_SIZE: int = int(YAML_CONFIG.get("max_diff_size", 100_000))
 MAX_TOKENS: int = int(YAML_CONFIG.get("max_tokens", 4096))
 
@@ -231,8 +257,8 @@ PROVIDERS = {
 }
 
 
-def call_llm(diff: str) -> str:
-    """Send the diff to the configured LLM for security review."""
+def call_llm(command: str, diff: str) -> str:
+    """Send the diff to the configured LLM using the prompt for the given command."""
     if not REVIEWER_API_KEY and REVIEWER_PROVIDER != "local":
         return "*Review skipped: REVIEWER_API_KEY not configured.*"
 
@@ -240,7 +266,8 @@ def call_llm(diff: str) -> str:
     if not provider_fn:
         return f"*Review skipped: unknown provider '{REVIEWER_PROVIDER}'.*"
 
-    prompt = REVIEW_PROMPT.format(diff=diff[:MAX_DIFF_SIZE])
+    prompt_template = PROMPTS.get(command, DEFAULT_PROMPT)
+    prompt = prompt_template.format(diff=diff[:MAX_DIFF_SIZE])
     return provider_fn(prompt)
 
 
@@ -267,63 +294,115 @@ def gitea_api(method: str, path: str, body: dict | None = None) -> dict | str:
         raise
 
 
-def get_commit_diff(owner: str, repo: str, sha: str) -> str:
-    """Fetch the diff for a specific commit from Gitea."""
-    url = f"{GITEA_URL}/api/v1/repos/{owner}/{repo}/git/commits/{sha}.diff"
+def get_pr_diff(owner: str, repo: str, pr_number: int) -> str:
+    """Fetch the full diff for a pull request from Gitea."""
+    url = f"{GITEA_URL}/api/v1/repos/{owner}/{repo}/pulls/{pr_number}.diff"
     headers = {"Authorization": f"token {GITEA_TOKEN}"}
     req = Request(url, headers=headers)
     try:
         with urlopen(req, timeout=30) as resp:
             return resp.read().decode()
     except URLError as e:
-        log.error("Failed to fetch diff for %s: %s", sha, e)
+        log.error("Failed to fetch PR #%d diff: %s", pr_number, e)
         return ""
 
 
-def post_commit_comment(owner: str, repo: str, sha: str, body: str) -> None:
-    """Post a review comment on a Gitea commit."""
-    comment_body = f"## Security Review (automated)\n\n{body}"
-    gitea_api("POST", f"/repos/{owner}/{repo}/git/commits/{sha}/comments", {
+REVIEW_MARKER = "<!-- automated-security-review -->"
+
+
+def has_existing_review(owner: str, repo: str, pr_number: int, sha: str) -> bool:
+    """Check if a review comment already exists for this commit SHA on the PR."""
+    try:
+        comments = gitea_api("GET", f"/repos/{owner}/{repo}/issues/{pr_number}/comments")
+        if isinstance(comments, list):
+            return any(
+                REVIEW_MARKER in c.get("body", "") and sha[:12] in c.get("body", "")
+                for c in comments
+            )
+    except URLError:
+        pass
+    return False
+
+
+def post_review_comment(owner: str, repo: str, pr_number: int, sha: str, body: str) -> None:
+    """Post a review as a PR comment. Includes a hidden marker so repo-watch can ignore it."""
+    comment_body = f"{REVIEW_MARKER}\n## Security Review (automated)\n**Commit:** `{sha[:12]}`\n\n{body}"
+    gitea_api("POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", {
         "body": comment_body,
     })
-    log.info("Posted review comment on %s/%s@%s", owner, repo, sha[:8])
+    log.info("Posted review comment on %s/%s PR #%d (%s)", owner, repo, pr_number, sha[:8])
 
 
 # ─── Webhook handler ─────────────────────────────────────────────────────────
 
 
-def handle_push_webhook(payload: dict) -> None:
-    """Process a Gitea push webhook."""
-    repo_full = payload.get("repository", {}).get("full_name", "")
-    ref = payload.get("ref", "")
-    commits = payload.get("commits", [])
-
-    if not repo_full or not commits:
-        log.info("Ignoring push with no commits: %s", repo_full)
+def review_pr(owner: str, repo: str, pr_number: int, branch: str, head_sha: str,
+              command: str = "security") -> None:
+    """Fetch diff, call LLM, and post review comment for a PR."""
+    # Dedup: skip if we already reviewed this exact commit
+    if has_existing_review(owner, repo, pr_number, head_sha):
+        log.info("PR %s/%s#%d: already reviewed %s, skipping", owner, repo, pr_number, head_sha[:8])
         return
 
-    # Only review agent/* branches
-    branch = ref.replace("refs/heads/", "")
-    if not branch.startswith("agent/"):
-        log.info("Skipping non-agent branch: %s", branch)
-        return
+    log.info("Reviewing PR %s/%s#%d (branch %s, HEAD %s)",
+             owner, repo, pr_number, branch, head_sha[:8])
 
-    owner, repo = repo_full.split("/", 1)
-    log.info("Reviewing push to %s/%s branch %s (%d commits)",
-             owner, repo, branch, len(commits))
-
-    # Review the latest commit (which contains the cumulative diff for a push)
-    latest_sha = commits[-1]["id"]
-    diff = get_commit_diff(owner, repo, latest_sha)
-
+    diff = get_pr_diff(owner, repo, pr_number)
     if not diff:
-        log.warning("Empty diff for %s@%s, skipping review", repo_full, latest_sha[:8])
+        log.warning("Empty diff for PR %s/%s#%d, skipping review", owner, repo, pr_number)
         return
 
-    log.info("Sending diff (%d bytes) to %s (%s) for review...",
-             len(diff), REVIEWER_PROVIDER, REVIEWER_MODEL)
-    review = call_llm(diff)
-    post_commit_comment(owner, repo, latest_sha, review)
+    log.info("Sending PR diff (%d bytes) to %s (%s) for /%s...",
+             len(diff), REVIEWER_PROVIDER, REVIEWER_MODEL, command)
+    review = call_llm(command, diff)
+    post_review_comment(owner, repo, pr_number, head_sha, review)
+
+
+def cmd_security(owner: str, repo: str, issue_number: int) -> None:
+    """Handle /security command — run a security review on the PR."""
+    try:
+        pr = gitea_api("GET", f"/repos/{owner}/{repo}/pulls/{issue_number}")
+    except URLError:
+        log.error("Not a PR or fetch failed: %s/%s#%d", owner, repo, issue_number)
+        return
+
+    branch = pr.get("head", {}).get("ref", "")
+    head_sha = pr.get("head", {}).get("sha", "")
+    if not head_sha:
+        log.warning("PR %s/%s#%d: no HEAD SHA, skipping", owner, repo, issue_number)
+        return
+
+    review_pr(owner, repo, issue_number, branch, head_sha, command="security")
+
+
+# Command dispatch — add new /commands here
+COMMANDS: dict[str, callable] = {
+    "/security": cmd_security,
+}
+
+
+def handle_comment_webhook(payload: dict) -> None:
+    """Process a Gitea issue_comment webhook — dispatches /commands."""
+    action = payload.get("action", "")
+    if action != "created":
+        return
+
+    comment = payload.get("comment", {})
+    body = comment.get("body", "").strip()
+
+    # Match the first word against known commands
+    cmd = body.split()[0] if body else ""
+    handler = COMMANDS.get(cmd)
+    if not handler:
+        return
+
+    repo_full = payload.get("repository", {}).get("full_name", "")
+    issue_number = payload.get("issue", {}).get("number")
+    owner, repo = repo_full.split("/", 1)
+
+    log.info("Command '%s' on %s#%d by %s",
+             cmd, repo_full, issue_number, comment.get("user", {}).get("login"))
+    handler(owner, repo, issue_number)
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
@@ -354,13 +433,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
         # Process the webhook
         event = self.headers.get("X-Gitea-Event", "")
-        if event == "push":
-            try:
-                handle_push_webhook(payload)
-            except Exception:
-                log.exception("Error processing push webhook")
-        else:
-            log.info("Ignoring event type: %s", event)
+        try:
+            if event in ("issue_comment", "pull_request_comment"):
+                handle_comment_webhook(payload)
+            else:
+                log.info("Ignoring event type: %s", event)
+        except Exception:
+            log.exception("Error processing %s webhook", event)
 
     def do_GET(self):
         """Health check endpoint."""
@@ -389,7 +468,7 @@ def main():
         sys.exit(1)
 
     if not GITEA_TOKEN:
-        log.warning("GITEA_ADMIN_TOKEN not set — cannot read diffs or post comments")
+        log.warning("BOT_SECURITY_TOKEN not set — cannot read diffs or post comments")
     if not REVIEWER_API_KEY and REVIEWER_PROVIDER != "local":
         log.warning("REVIEWER_API_KEY not set — reviews will be skipped")
 

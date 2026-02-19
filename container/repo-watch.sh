@@ -221,11 +221,17 @@ while true; do
         comments_json=$(gitea GET "/repos/${REPO_PATH}/issues/${number}/comments")
         num_comments=$(echo "$comments_json" | jq 'length')
 
-        # Determine who spoke last
+        # Determine who spoke last (skip bot commands and automated responses)
         if [[ "$num_comments" -eq 0 ]]; then
             last_author="$author"
         else
-            last_author=$(echo "$comments_json" | jq -r '.[-1].user.login')
+            last_author=$(echo "$comments_json" | jq -r '
+                [.[] | select(
+                    (.body | test("<!-- automated-security-review -->") | not)
+                    and (.body | test("^/") | not)
+                )]
+                | if length > 0 then .[-1].user.login else empty end')
+            [[ -z "$last_author" ]] && last_author="$author"
         fi
 
         # Skip if agent spoke last (waiting for human)
