@@ -1,5 +1,16 @@
 # Guide
 
+- [After a Reboot](#after-a-reboot)
+- [Image Profiles](#image-profiles)
+- [`container/` Directory](#container-directory)
+- [Git Remotes Inside the Container](#git-remotes-inside-the-container)
+- [VS Code Remote-SSH](#vs-code-remote-ssh)
+- [Reviewer](#reviewer)
+- [Repo Watch](#repo-watch)
+  - [Monitoring](#monitoring)
+  - [Configuration](#configuration)
+- [FAQ](#faq)
+
 ## After a Reboot
 
 ```bash
@@ -69,6 +80,7 @@ By default it ships with:
 - `CLAUDE.md` — baseline agent instructions (git workflow, remotes, verification)
 - `repo-watch.sh` — agentic loop script (see [Repo Watch](#repo-watch))
 - `repo-watch-prompt.md` — prompt template for repo-watch
+- `agent-watch.sh` — real-time viewer for agent activity (see [Monitoring](#monitoring))
 
 ## Git Remotes Inside the Container
 
@@ -98,9 +110,9 @@ Displaying the password is not a security issue, as anyone with docker permissio
 
 ## Reviewer
 
-The review service runs as a bot that responds to slash commands in PR comments. Comment `/security` on any PR to trigger an automated security review. It runs in a separate container with its own LLM API key — the agent never sees it.
+The review service runs as a bot that responds to slash commands in PR comments. Comment `/security` on any PR to trigger an automated security review. It runs in a separate container with its own LLM API key — the agent never interacts with it.
 
-Each bot command gets a dedicated Gitea user (`bot-security`, etc.) so reviews are clearly attributed. Duplicate reviews on the same commit are skipped automatically. The bot is extensible — new commands can be added to the `COMMANDS` dict in `review/review-server.py`.
+Each bot command gets a dedicated Gitea user (`bot-security`, etc.). Duplicate reviews on the same commit are skipped automatically. The bot is extensible — new commands can be added to the `COMMANDS` dict in `review/review-server.py`.
 
 The reviewer is managed independently from the core infrastructure via three commands:
 
@@ -171,6 +183,43 @@ On first run, the script creates these labels (idempotent):
 - `in-progress` — agent is working on it
 - `needs-review` — agent opened a PR
 - `done` — merged and closed
+
+### Monitoring
+
+Each Claude Code invocation is streamed to a JSONL log file in `~/.repo-watch-logs/`.
+A symlink at `~/.repo-watch-logs/current.jsonl` points to the active log during execution.
+
+**Live status** (open a new byobu window with F2):
+```bash
+./agent-watch.sh               # real-time: elapsed time, tokens, cost, tool calls
+```
+
+**From the host** (if using `PROJECTS_DIR` bind mounts):
+```bash
+tail -f container_volumes/<project>/.repo-watch-logs/current.jsonl
+```
+
+Log files persist after completion and can be attached to issue comments.
+
+### Configuration
+
+| Variable | Effect | Default |
+|---|---|---|
+| `POLL_INTERVAL` | Seconds between polling cycles | `30` |
+| `MAX_RETRIES` | Consecutive failures before skipping an issue | `3` |
+| `REPO_WATCH_MAX_TURNS` | Max agentic iterations per invocation | unlimited |
+| `REPO_WATCH_MAX_BUDGET_USD` | Cost ceiling per invocation (USD) | unlimited |
+| `REPO_WATCH_TIMEOUT` | Wall-clock limit (e.g., `10m`, `1h`) | unlimited |
+
+Set as environment variables when launching repo-watch:
+```bash
+POLL_INTERVAL=60 REPO_WATCH_MAX_TURNS=50 REPO_WATCH_TIMEOUT=15m ./repo-watch.sh
+```
+
+### Stopping
+
+- **Ctrl+C** in the repo-watch window kills both the script and the running Claude process.
+- To kill only the current task without stopping the loop, find the claude PID from another byobu window and `kill` it. The loop will continue to the next cycle.
 
 ### Retry behavior
 

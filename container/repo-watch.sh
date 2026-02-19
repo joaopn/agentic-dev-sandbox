@@ -10,12 +10,18 @@
 #   ./repo-watch.sh              # poll every 30s (default)
 #   POLL_INTERVAL=60 ./repo-watch.sh   # poll every 60s
 #
+# Safety limits (env vars, all optional):
+#   REPO_WATCH_MAX_TURNS     — max agentic iterations per invocation
+#   REPO_WATCH_MAX_BUDGET_USD — cost ceiling per invocation
+#   REPO_WATCH_TIMEOUT       — wall-clock limit (e.g. "10m", "1h")
+#
 # Prerequisites:
 #   - Claude Code installed and authenticated (`claude` must work)
 #   - Environment variables set by entrypoint: GITEA_URL, GITEA_TOKEN,
 #     GITEA_USER, REPO_NAME
 #
 # This script blocks the terminal. Use byobu F2 to open a new window.
+# Run ./agent-watch.sh in another window for real-time agent activity.
 
 set -euo pipefail
 
@@ -26,6 +32,13 @@ API="${GITEA_URL}/api/v1"
 REPO_PATH="${GITEA_USER}/${REPO_NAME}"
 PROMPT_FILE="${HOME}/repo-watch-prompt.md"
 FAIL_DIR="${HOME}/.repo-watch-failures"
+LOG_DIR="${HOME}/.repo-watch-logs"
+CURRENT_LOG_LINK="${LOG_DIR}/current.jsonl"
+
+# Safety limits (empty = unlimited)
+REPO_WATCH_MAX_TURNS="${REPO_WATCH_MAX_TURNS:-}"
+REPO_WATCH_MAX_BUDGET_USD="${REPO_WATCH_MAX_BUDGET_USD:-}"
+REPO_WATCH_TIMEOUT="${REPO_WATCH_TIMEOUT:-}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -83,23 +96,40 @@ ${open_prs:-_None._}
 - Repo directory: ${REPO_DIR}
 CONTEXT
 
+    local log_file="${LOG_DIR}/${item_type,,}-${number}-$(date '+%Y%m%d-%H%M%S').jsonl"
+    ln -sfn "$log_file" "$CURRENT_LOG_LINK"
+
     log "invoking claude for ${item_type} #${number}..."
+    log "log: ${log_file}"
+
+    # Build claude args
+    local claude_args=(-p "$(cat "$task_file")" --output-format stream-json --verbose)
+    [[ -n "$REPO_WATCH_MAX_TURNS" ]] && claude_args+=(--max-turns "$REPO_WATCH_MAX_TURNS")
+    [[ -n "$REPO_WATCH_MAX_BUDGET_USD" ]] && claude_args+=(--max-budget-usd "$REPO_WATCH_MAX_BUDGET_USD")
+
     local rc=0
-    local claude_output
-    claude_output=$( (cd "$REPO_DIR" && claude -p "$(cat "$task_file")" --output-format json) ) || rc=$?
-
-    rm -f "$task_file"
-
-    # Parse and display result + stats
-    if [[ -n "$claude_output" ]]; then
-        echo "$claude_output" | jq -r '
-            .result,
-            "",
-            "\u001b[30;47m Time: \(.duration_ms/1000)s | In: \(.usage.input_tokens) | Out: \(.usage.output_tokens) | Cached: \(.usage.cache_read_input_tokens) | Cost: $\(.total_cost_usd) \u001b[0m"
-        ' 2>/dev/null || echo "$claude_output"
+    if [[ -n "$REPO_WATCH_TIMEOUT" ]]; then
+        (cd "$REPO_DIR" && timeout --signal=TERM "$REPO_WATCH_TIMEOUT" claude "${claude_args[@]}") \
+            > "$log_file" 2>&1 || rc=$?
+    else
+        (cd "$REPO_DIR" && claude "${claude_args[@]}") > "$log_file" 2>&1 || rc=$?
     fi
 
-    if [[ "$rc" -ne 0 ]]; then
+    rm -f "$task_file" "$CURRENT_LOG_LINK"
+
+    # Parse result + stats from the JSONL log
+    if [[ -f "$log_file" ]]; then
+        jq -r 'select(.type == "result") |
+            .result,
+            "",
+            "\u001b[30;47m Time: \(.duration_ms/1000)s | In: \(.usage.input_tokens // "N/A") | Out: \(.usage.output_tokens // "N/A") | Cached: \(.usage.cache_read_input_tokens // "N/A") | Cost: $\(.total_cost_usd // "N/A") \u001b[0m"
+        ' "$log_file" 2>/dev/null | tail -4
+    fi
+
+    if [[ "$rc" -eq 124 ]]; then
+        log "claude timed out after ${REPO_WATCH_TIMEOUT} for ${item_type} #${number}"
+        return 0  # timeout is deliberate, not a retry-worthy failure
+    elif [[ "$rc" -ne 0 ]]; then
         log "claude exited with error (code ${rc}) for ${item_type} #${number}"
         # Track failure count
         mkdir -p "$FAIL_DIR"
@@ -190,10 +220,14 @@ done
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
-mkdir -p "$FAIL_DIR"
+mkdir -p "$FAIL_DIR" "$LOG_DIR"
 
 log "repo-watch: monitoring ${REPO_PATH} (poll every ${POLL_INTERVAL}s)"
-log "repo-watch: press Ctrl+C to stop"
+log "repo-watch: logs → ${LOG_DIR}"
+[[ -n "$REPO_WATCH_MAX_TURNS" ]] && log "repo-watch: max turns: ${REPO_WATCH_MAX_TURNS}"
+[[ -n "$REPO_WATCH_MAX_BUDGET_USD" ]] && log "repo-watch: max budget: \$${REPO_WATCH_MAX_BUDGET_USD}"
+[[ -n "$REPO_WATCH_TIMEOUT" ]] && log "repo-watch: timeout: ${REPO_WATCH_TIMEOUT}"
+log "repo-watch: press Ctrl+C to stop. Run ./agent-watch.sh for live status."
 
 was_idle=false
 

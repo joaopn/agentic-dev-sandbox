@@ -52,6 +52,7 @@ To use:
 claude                # authenticate first
 ./repo-watch.sh       # starts monitoring — blocks terminal
 # F2 for a new byobu window
+./agent-watch.sh      # starts log-monitoring the agent activity in real time
 ```
 
 See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
