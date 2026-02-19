@@ -83,17 +83,20 @@ git clone https://github.com/joaopn/agentic-dev-sandbox.git
 cd agentic-dev-sandbox
 
 cp .env.example .env
-# Edit .env: set GITHUB_PAT for private repos (optional for public), reviewer settings, etc.
+# Edit .env: set GITHUB_PAT for private repos
 
-# 2. One-time setup (starts Gitea, review service, router)
+# 2. One-time setup (starts Gitea, router)
 python sandbox.py setup
+
+# Optional: configure and start the reviewer service
+python sandbox.py review setup
 
 # 3. Create a sandboxed project with python and Claude Code
 python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
 
 # 4. Interact with the agent
 python sandbox.py attach myproject
-## You're in a byobu terminal session inside the agent container.
+## You're in a byobu terminal session inside the agent container. Code away.
 ## F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
 ## If --claude-yolo, `claude` will prompt authentication
 
