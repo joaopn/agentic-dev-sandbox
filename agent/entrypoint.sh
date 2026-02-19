@@ -8,14 +8,23 @@
 #   REPO_NAME        — Repository name
 #   REPO_BRANCH      — Branch to check out (optional, defaults to repo default)
 #   SSH_PASSWORD     — Password for SSH access
+#   HOST_GID         — Host user's GID, for bind-mount access (optional)
 #   CLAUDE_YOLO      — Install Claude Code + bypass permissions (optional)
 
 set -euo pipefail
 
 echo "=== Agent container starting ==="
 
+# --- Match agent group GID to host user for bind-mount access ---
+if [[ -n "${HOST_GID:-}" ]]; then
+    sudo groupmod -o -g "${HOST_GID}" agent 2>/dev/null || true
+fi
+
 # --- Restore home directory dotfiles (volume mount hides image contents) ---
 sudo chown agent:agent /home/agent
+
+# Group-writable umask so host user (shared GID) gets rw on new files
+umask 002
 if [[ ! -f ~/.bashrc ]]; then
     cp -a /etc/agent-skel/. ~/
 fi
@@ -44,6 +53,11 @@ GITEA_HOST=$(echo "$GITEA_URL" | sed 's|https\?://||')
 echo "${GITEA_URL//:\/\//:\/\/${GITEA_USER}:${GITEA_TOKEN}@}" > ~/.git-credentials
 chmod 600 ~/.git-credentials
 git config --global credential.helper 'store --file ~/.git-credentials'
+
+# --- Ensure umask 002 in interactive shells (for host bind-mount access) ---
+if ! grep -q 'umask 002' ~/.bashrc 2>/dev/null; then
+    echo 'umask 002' >> ~/.bashrc
+fi
 
 # --- Claude Code setup (if --claude-yolo) ---
 if [[ "${CLAUDE_YOLO:-}" == "true" ]]; then

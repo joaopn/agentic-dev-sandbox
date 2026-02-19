@@ -12,7 +12,8 @@ python sandbox.py setup
 # 2. Creates a sandboxed project with python and pre-install Claude Code in YOLO mode
 python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
 
-# 3. Interact with the agent (use `claude` to authenticate Claude Code)
+# 3. Interacts with the agent 
+## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows
 python sandbox.py attach myproject
 ```
 
@@ -40,7 +41,6 @@ See [SECURITY.md](docs/SECURITY.md) for the full threat model and network isolat
 
 The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
 
-<br>
 <p align="center">
   <img src="docs/pirate.png" width="600" alt="Repo Watch example">
 </p>
@@ -60,7 +60,6 @@ See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
 
 An isolated bot (`bot-security`) can review PRs for security issues on command. Comment `/security` on any PR in Gitea to trigger a review. The bot posts findings as a PR comment.
 
-<br>
 <p align="center">
   <img src="docs/bot.png" width="600" alt="Repo Watch example">
 </p>

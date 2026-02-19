@@ -1,4 +1,6 @@
-FROM continuumio/miniconda3
+# Uses NVIDIA PyTorch image for pre-built CUDA environment with numpy/scipy/transformers.
+# See: https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch/tags
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -10,8 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping \
     sudo \
     locales \
+    nvtop \
     btop \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/apt/lists/partial \
+    && chown -R _apt:root /var/lib/apt/lists/partial
 
 # Locale setup (many tools expect UTF-8)
 RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen
@@ -23,9 +28,17 @@ RUN mkdir -p /run/sshd && \
     sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     echo "AllowAgentForwarding no" >> /etc/ssh/sshd_config
 
-# Create non-root user for the agent (pin UID 1000 — some base images have
-# pre-existing users that would push the auto-assigned UID higher).
-RUN useradd -m -s /bin/bash -G sudo -u 1000 agent && \
+# Install Miniconda
+RUN curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh && \
+    bash /tmp/miniconda.sh -b -p /opt/conda && \
+    rm /tmp/miniconda.sh
+ENV PATH="/opt/conda/bin:$PATH"
+
+# Create non-root user for the agent (pin UID 1000 — evict any existing
+# user that claims it, e.g. the ubuntu user in nvidia/cuda base images).
+RUN existing=$(getent passwd 1000 | cut -d: -f1) && \
+    [ -z "$existing" ] || userdel -r "$existing" && \
+    useradd -m -s /bin/bash -G sudo -u 1000 agent && \
     echo "agent ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/agent
 
 # Initialize conda for the agent user (adds shell hooks to .bashrc)

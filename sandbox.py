@@ -195,6 +195,15 @@ def resolve_profile_image(profile: str) -> tuple[str, Path]:
     return image_tag, dockerfile
 
 
+# Profiles that need GPU passthrough by default.
+_GPU_PROFILES = {"cuda"}
+
+
+def profile_default_gpus(profile: str) -> str:
+    """Return default --gpus value for a profile (empty string means none)."""
+    return "all" if profile in _GPU_PROFILES else ""
+
+
 def get_agent_containers() -> list[str]:
     r = subprocess.run(
         ["docker", "ps", "-a", "--filter", "name=^sandbox-agent-", "--format", "{{.Names}}"],
@@ -278,11 +287,12 @@ def build_agent_docker_args(
         "-e", f"GITEA_USER={gitea_user}",
         "-e", f"REPO_NAME={project}",
         "-e", f"SSH_PASSWORD={ssh_pass}",
+        "-e", f"HOST_GID={os.getgid()}",
         # Runtime hardening
         "--cap-drop=ALL",
-        "--cap-add=CHOWN", "--cap-add=FOWNER", "--cap-add=SETGID",
-        "--cap-add=SETUID", "--cap-add=KILL", "--cap-add=FSETID",
-        "--cap-add=AUDIT_WRITE", "--cap-add=NET_RAW",
+        "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE", "--cap-add=FOWNER",
+        "--cap-add=SETGID", "--cap-add=SETUID", "--cap-add=KILL",
+        "--cap-add=FSETID", "--cap-add=AUDIT_WRITE", "--cap-add=NET_RAW",
         "--pids-limit=512",
         "--label", f"sandbox.project={project}",
         "--label", f"sandbox.egress={open_egress}",
@@ -725,15 +735,17 @@ def cmd_create(args: argparse.Namespace) -> None:
         else:
             run_check(["docker", "volume", "create", volume_name])
 
-    # Copy container/ files to agent home and fix ownership for bind mounts
+    # Copy container/ files to agent home and fix ownership for bind mounts.
+    # Use host GID so the invoking user gets group rw access to container_volumes/.
+    host_gid = os.getgid()
     container_src = SCRIPT_DIR / "container"
     if container_src.is_dir():
         run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent",
                     "-v", f"{container_src}:/src:ro", "alpine",
-                    "sh", "-c", "cp /src/* /home/agent/ && chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:1000 /home/agent"])
+                    "sh", "-c", f"cp /src/* /home/agent/ && chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
     else:
         run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
-                    "sh", "-c", "chown -R 1000:1000 /home/agent"])
+                    "sh", "-c", f"chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
 
     # 7. Create per-project network and connect infrastructure
     print("Setting up agent network...")
@@ -758,7 +770,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or "", claude_yolo=args.claude_yolo,
+        gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
     )
     run_check(["docker", *docker_args])
 
@@ -1088,7 +1100,7 @@ def cmd_recreate(args: argparse.Namespace) -> None:
         gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or "", claude_yolo=args.claude_yolo,
+        gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
     )
 
     print("Starting new container...")

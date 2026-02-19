@@ -23,7 +23,8 @@ Profiles let you pick different base environments for agent containers. Each pro
 
 | Profile | Base image | Includes |
 |---|---|---|
-| `python` | `continuumio/miniconda3` | Conda, git, byobu, sshd, jq, nano |
+| `python` | `continuumio/miniconda3` | conda, nano |
+| `cuda` | `nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04` | CUDA 12.8, PyTorch, conda, nano |
 
 ```bash
 python sandbox.py create https://github.com/you/myproject --profile python
@@ -56,6 +57,7 @@ To add a custom profile, create `agent/Dockerfile.myprofile`. Copy an existing D
 | `locales` | UTF-8 support — without it, some tools misbehave on non-ASCII content |
 | `nano` | Lightweight editor for quick in-container edits |
 | `iputils-ping` | Useful for debugging network isolation |
+| `btop` | Useful for a global view of the container activity |
 
 ## `container/` Directory
 
@@ -123,9 +125,9 @@ python sandbox.py review show <project> <branch>
 
 | Provider | API key required | Endpoint |
 |---|---|---|
-| `anthropic` | Yes | `https://api.anthropic.com` (default) |
-| `openai` | Yes | `https://api.openai.com` (default) |
-| `openrouter` | Yes | `https://openrouter.ai` (default) |
+| `anthropic` | Yes | `https://api.anthropic.com`|
+| `openai` | Yes | `https://api.openai.com`|
+| `openrouter` | Yes | `https://openrouter.ai/api`|
 | `local` | No | Must set `REVIEWER_ENDPOINT` |
 
 Default endpoints are in `review/review-config.yaml`. Override with `REVIEWER_ENDPOINT` in `.env`.
