@@ -30,6 +30,25 @@ curl -s -X POST \
   "$GITEA_URL/api/v1/repos/$GITEA_USER/$REPO_NAME/issues/ISSUE_NUMBER/comments"
 ```
 
+### Attach an image to a comment
+
+Post the comment first, then attach the file using the returned comment ID:
+
+```bash
+# 1. Post the comment (capture the ID)
+COMMENT_ID=$(curl -s -X POST \
+  -H "Authorization: token $GITEA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"body":"Here are the results:"}' \
+  "$GITEA_URL/api/v1/repos/$GITEA_USER/$REPO_NAME/issues/ISSUE_NUMBER/comments" | jq -r '.id')
+
+# 2. Attach the image
+curl -s -X POST \
+  -H "Authorization: token $GITEA_TOKEN" \
+  -F "attachment=@/path/to/image.png" \
+  "$GITEA_URL/api/v1/repos/$GITEA_USER/$REPO_NAME/issues/comments/$COMMENT_ID/assets"
+```
+
 ### Create a pull request
 
 ```bash
@@ -111,3 +130,4 @@ curl -s -X POST \
 5. **Merge only when approved.** Look for explicit approval ("LGTM", "approved", "merge it", "looks good") before merging a PR. After merging, close the issue and label it `done`.
 6. **Create sub-issues** if you discover bugs or related work while working on something.
 7. **Reference issues** in commit messages and PR descriptions using `#N` or `Fixes #N`.
+8. **Attach images** when your work produces visual output (plots, diagrams, screenshots). Save the file, then use the "Attach an image to a comment" API to upload it to your comment. The human can't see files inside the container — attachments are the only way to share visual results.

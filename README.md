@@ -4,6 +4,18 @@ A simple, but opinionated, sandboxed development environment for agentic LLMs. T
 
 *As it should be.*
 
+## Very Quick Start
+```bash
+# 1. One-time setup (starts Gitea, router)
+python sandbox.py setup
+
+# 2. Creates a sandboxed project with python and pre-install Claude Code in YOLO mode
+python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
+
+# 3. Interact with the agent (use `claude` to authenticate Claude Code)
+python sandbox.py attach myproject
+```
+
 ## How it works
 
 ```mermaid
