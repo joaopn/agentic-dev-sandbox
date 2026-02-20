@@ -52,14 +52,14 @@ To use:
 claude                # authenticate first
 ./repo-watch.sh       # agent starts monitoring repo — blocks terminal
 # F2 for a new byobu window
-./agent-watch.sh      # starts log-monitoring the agent activity in real time
+./agent-watch.sh      # view the agent activity in real-time (optional) 
 ```
 
-See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
+The last agent comment also attaches its full internal (thinking) log as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
 
 ## Reviewer
 
-An isolated bot (`bot-security`) can review PRs for security issues on command. Comment `/security` on any PR in Gitea to trigger a review. The bot posts findings as a PR comment.
+An isolated bot (`bot-security`) can review PRs for security issues on command. Comment `/security` on any PR to trigger a review. The bot posts findings as a PR comment.
 
 <p align="center">
   <img src="docs/bot.png" width="600" alt="Repo Watch example">
