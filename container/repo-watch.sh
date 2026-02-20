@@ -40,6 +40,9 @@ REPO_WATCH_MAX_TURNS="${REPO_WATCH_MAX_TURNS:-}"
 REPO_WATCH_MAX_BUDGET_USD="${REPO_WATCH_MAX_BUDGET_USD:-}"
 REPO_WATCH_TIMEOUT="${REPO_WATCH_TIMEOUT:-}"
 
+# Last log file path (set by invoke_agent, used for post-processing)
+LAST_LOG_FILE=""
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 gitea() {
@@ -97,6 +100,7 @@ ${open_prs:-_None._}
 CONTEXT
 
     local log_file="${LOG_DIR}/${item_type,,}-${number}-$(date '+%Y%m%d-%H%M%S').jsonl"
+    LAST_LOG_FILE="$log_file"
     ln -sfn "$log_file" "$CURRENT_LOG_LINK"
 
     log "invoking claude for ${item_type} #${number}..."
@@ -179,6 +183,109 @@ ${c_body}
     done
 
     echo "$formatted"
+}
+
+# Parse a JSONL log into a readable markdown file.
+# Extracts thinking (blockquoted), text responses, tool indicators, and summary.
+# Args: $1=log_file  Prints: path to the parsed file
+parse_log() {
+    local log_file="$1"
+    local basename
+    basename=$(basename "$log_file" .jsonl)
+    local parsed_file="$(dirname "$log_file")/agent_log_${basename}.md"
+    > "$parsed_file"
+
+    while IFS= read -r line; do
+        [[ -z "$line" || "${line:0:1}" != "{" ]] && continue
+        type=$(echo "$line" | jq -r '.type // empty' 2>/dev/null) || continue
+
+        case "$type" in
+            assistant)
+                # Thinking blocks (blockquoted)
+                thinking=$(echo "$line" | jq -r '.message.content[]? | select(.type == "thinking") | .thinking' 2>/dev/null) || true
+                if [[ -n "$thinking" ]]; then
+                    echo "$thinking" | sed 's/^/> /' >> "$parsed_file"
+                    echo "" >> "$parsed_file"
+                fi
+                # Tool name indicators
+                tools=$(echo "$line" | jq -r '.message.content[]? | select(.type == "tool_use") | .name' 2>/dev/null) || true
+                if [[ -n "$tools" ]]; then
+                    while IFS= read -r tool_name; do
+                        echo "  [tool] ${tool_name}" >> "$parsed_file"
+                    done <<< "$tools"
+                fi
+                # Text responses
+                text=$(echo "$line" | jq -r '.message.content[]? | select(.type == "text") | .text' 2>/dev/null) || true
+                if [[ -n "$text" ]]; then
+                    echo "$text" >> "$parsed_file"
+                fi
+                ;;
+            result)
+                local duration total_in total_out total_cached cost
+                duration=$(echo "$line" | jq -r '.duration_ms // 0' 2>/dev/null) || duration=0
+                total_in=$(echo "$line" | jq -r '.usage.input_tokens // 0' 2>/dev/null) || true
+                total_out=$(echo "$line" | jq -r '.usage.output_tokens // 0' 2>/dev/null) || true
+                total_cached=$(echo "$line" | jq -r '.usage.cache_read_input_tokens // 0' 2>/dev/null) || true
+                cost=$(echo "$line" | jq -r '.total_cost_usd // "N/A"' 2>/dev/null) || true
+                # Clean up float precision (e.g. 0.15171925000000003 → 0.151719)
+                if [[ "$cost" != "N/A" ]]; then
+                    cost=$(printf '%.6f' "$cost")
+                fi
+                echo "" >> "$parsed_file"
+                echo "---" >> "$parsed_file"
+                printf 'Time: %ss | In: %s | Out: %s | Cache: %s | Cost: $%s\n' \
+                    "$(( duration / 1000 ))" "$total_in" "$total_out" "$total_cached" "$cost" >> "$parsed_file"
+                ;;
+        esac
+    done < "$log_file"
+
+    echo "$parsed_file"
+}
+
+# Attach the parsed log to the agent's last comment on an issue/PR.
+# Uploads the file as an attachment, then patches the comment body with a
+# relative markdown link so the download URL works regardless of ROOT_URL.
+# Args: $1=issue_number $2=file_path
+attach_log_to_last_comment() {
+    local number="$1" parsed_file="$2"
+    [[ ! -f "$parsed_file" || ! -s "$parsed_file" ]] && return 0
+
+    # Find the agent's last comment
+    local last_comment comment_id
+    last_comment=$(gitea GET "/repos/${REPO_PATH}/issues/${number}/comments" \
+        | jq "[.[] | select(.user.login == \"${GITEA_USER}\")] | last")
+    comment_id=$(echo "$last_comment" | jq -r '.id // empty')
+
+    if [[ -z "$comment_id" ]]; then
+        log "no agent comment found for #${number}, skipping log attachment"
+        return 0
+    fi
+
+    # Upload the attachment and extract the UUID
+    local attach_response attach_uuid attach_name
+    attach_response=$(curl -s -X POST \
+        -H "Authorization: token ${GITEA_TOKEN}" \
+        -F "attachment=@${parsed_file}" \
+        "${API}/repos/${REPO_PATH}/issues/comments/${comment_id}/assets")
+    attach_uuid=$(echo "$attach_response" | jq -r '.uuid // empty')
+    attach_name=$(echo "$attach_response" | jq -r '.name // empty')
+
+    if [[ -z "$attach_uuid" ]]; then
+        log "failed to upload attachment for #${number}"
+        return 0
+    fi
+
+    # Patch the comment to add a relative markdown link (bypasses broken ROOT_URL)
+    # Keep body in JSON-land the entire time to avoid shell mangling of newlines
+    local updated_body
+    updated_body=$(echo "$last_comment" | jq \
+        --arg name "$attach_name" \
+        --arg uuid "$attach_uuid" \
+        '{"body": (.body + "\n\n[" + $name + "](/attachments/" + $uuid + ")")}')
+
+    gitea PATCH "/repos/${REPO_PATH}/issues/comments/${comment_id}" "$updated_body" >/dev/null
+
+    log "attached activity log to comment #${comment_id} on #${number}"
 }
 
 # ── Preflight checks ────────────────────────────────────────────────────────
@@ -290,6 +397,12 @@ while true; do
         invoke_agent "$number" "$title" "$body" "$author" "$labels" "$local_type" \
             "$formatted_comments" "$related_prs" || true
 
+        # Parse and attach activity log
+        if [[ -n "$LAST_LOG_FILE" && -f "$LAST_LOG_FILE" ]]; then
+            parsed_file=$(parse_log "$LAST_LOG_FILE")
+            attach_log_to_last_comment "$number" "$parsed_file"
+        fi
+
         log "done with ${local_type} #${number}"
         handled=true
         break  # one item per cycle
@@ -368,6 +481,12 @@ ${review_context}
 
             invoke_agent "$pr_number" "$pr_title" "$pr_body" "$pr_author" "$pr_labels" "PR" \
                 "$formatted_comments" "$related_prs" "$extra" || true
+
+            # Parse and attach activity log
+            if [[ -n "$LAST_LOG_FILE" && -f "$LAST_LOG_FILE" ]]; then
+                parsed_file=$(parse_log "$LAST_LOG_FILE")
+                attach_log_to_last_comment "$pr_number" "$parsed_file"
+            fi
 
             log "done with PR #${pr_number}"
             handled=true

@@ -37,8 +37,8 @@ start_epoch=$(date +%s)
 clear
 rows=$(tput lines)
 cleanup() {
-    printf '\033[%d;1H\n' "$rows"
     printf '\033[r'
+    clear
     tput cnorm 2>/dev/null || true
 }
 trap cleanup EXIT

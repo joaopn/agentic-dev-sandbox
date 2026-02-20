@@ -50,7 +50,7 @@ To use:
 ```bash
 # Inside the agent container (after sandbox attach)
 claude                # authenticate first
-./repo-watch.sh       # starts monitoring — blocks terminal
+./repo-watch.sh       # agent starts monitoring repo — blocks terminal
 # F2 for a new byobu window
 ./agent-watch.sh      # starts log-monitoring the agent activity in real time
 ```

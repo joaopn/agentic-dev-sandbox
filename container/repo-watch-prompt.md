@@ -22,11 +22,13 @@ Use curl to interact with Gitea. Environment variables are already set:
 
 ### Comment on an issue
 
+Use `jq` to build the JSON body — this correctly escapes newlines and special characters in multiline content:
+
 ```bash
 curl -s -X POST \
   -H "Authorization: token $GITEA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"body":"Your message here"}' \
+  -d "$(jq -n --arg body "Your message here" '{"body": $body}')" \
   "$GITEA_URL/api/v1/repos/$GITEA_USER/$REPO_NAME/issues/ISSUE_NUMBER/comments"
 ```
 
