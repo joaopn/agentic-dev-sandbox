@@ -1052,9 +1052,61 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     if not run_quiet(["docker", "volume", "inspect", volume_name]):
         die(f"Project {project} does not exist.")
 
+    # Confirmation
+    print(f"=== Recreate: {project} ===\n")
+    print("This will:")
+    print(f"  - Remove the agent container (sandbox-agent-{project})")
+    print(f"  - Delete the workspace volume and all agent work")
+    print(f"  - Generate fresh Gitea credentials")
+    print(f"  - Start a new container with a fresh clone\n")
+    print("Preserved:")
+    print(f"  - Gitea agent user and repo (agent-{project}/{project})")
+    print(f"  - Gitea mirror (sandbox-admin/{project})\n")
+    confirm = input("Type 'yes' to confirm: ").strip()
+    if confirm != "yes":
+        print("Aborted.")
+        return
+
     # Stop existing container
     print("Stopping existing container...")
     run(["docker", "rm", "-f", container_name], capture_output=True)
+
+    # Remove existing volume and workspace directory
+    print("Removing workspace volume...")
+    run(["docker", "volume", "rm", volume_name], capture_output=True)
+    if cfg.projects_dir:
+        workspace_dir = Path(cfg.projects_dir) / project
+        if workspace_dir.is_dir():
+            print("Removing workspace directory...")
+            try:
+                shutil.rmtree(workspace_dir)
+            except PermissionError:
+                run(["docker", "run", "--rm", "-v", f"{workspace_dir.resolve()}:/mnt/ws",
+                     "alpine", "rm", "-rf", "/mnt/ws"], capture_output=True)
+                if workspace_dir.is_dir():
+                    workspace_dir.rmdir()
+
+    # Recreate volume
+    print("Creating fresh volume...")
+    if cfg.projects_dir:
+        workspace_dir = Path(cfg.projects_dir) / project
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        run_check(["docker", "volume", "create", "--driver", "local",
+                    "--opt", "type=none", "--opt", f"device={workspace_dir}",
+                    "--opt", "o=bind", volume_name])
+    else:
+        run_check(["docker", "volume", "create", volume_name])
+
+    # Copy container/ files to agent home and fix ownership
+    host_gid = os.getgid()
+    container_src = SCRIPT_DIR / "container"
+    if container_src.is_dir():
+        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent",
+                    "-v", f"{container_src}:/src:ro", "alpine",
+                    "sh", "-c", f"cp /src/* /home/agent/ && chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
+    else:
+        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
+                    "sh", "-c", f"chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
 
     # Generate fresh Gitea token
     print("Generating fresh Gitea token...")
@@ -1117,8 +1169,7 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     print(f"""
 === Recreated: {project} ===
 Attach:  sandbox attach {project}
-SSH:     ssh agent@localhost -p {ssh_port}  (password: {ssh_pass})
-Workspace volume preserved.""")
+SSH:     ssh agent@localhost -p {ssh_port}  (password: {ssh_pass})""")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -1178,7 +1229,19 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     gitea_user = f"agent-{project}"
     volume_name = f"sandbox-{project}"
 
-    print(f"=== Destroying sandbox: {project} ===")
+    print(f"=== Destroy: {project} ===\n")
+    print("This will permanently delete:")
+    print(f"  - Agent container (sandbox-agent-{project})")
+    print(f"  - Workspace volume and all agent work")
+    print(f"  - Agent network")
+    print(f"  - Gitea agent user and repo (agent-{project}/{project})")
+    print(f"  - Gitea mirror (sandbox-admin/{project})\n")
+    confirm = input("Type 'yes' to confirm: ").strip()
+    if confirm != "yes":
+        print("Aborted.")
+        return
+
+    print(f"\nDestroying sandbox: {project}...")
 
     if container_exists(container_name):
         print("Removing container...")
@@ -1209,7 +1272,11 @@ def cmd_destroy(args: argparse.Namespace) -> None:
         print(f"Removing Gitea user {gitea_user}...")
         gitea_api_ok(cfg, "DELETE", f"/admin/users/{gitea_user}?purge=true")
 
-    print(f"Destroyed. Gitea mirror (sandbox-admin/{project}) preserved.")
+    if gitea_api_ok(cfg, "GET", f"/repos/sandbox-admin/{project}"):
+        print(f"Removing Gitea mirror (sandbox-admin/{project})...")
+        gitea_api_ok(cfg, "DELETE", f"/repos/sandbox-admin/{project}")
+
+    print(f"Destroyed.")
 
 
 def cmd_unsetup(args: argparse.Namespace) -> None:

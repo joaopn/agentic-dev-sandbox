@@ -146,9 +146,9 @@ Commands:
   review show <project> <branch>  Fetch, security review, safety checks, diffstat
   review setup                   Configure and start the review service
   review on / off                Toggle reviewer without re-prompting
-  recreate <project> [opts]      New container + fresh token, keeps volume
+  recreate <project> [opts]      New container + fresh volume + fresh token
   status                         List all projects, containers, ports
-  destroy <project>              Remove container, volume, Gitea user + fork
+  destroy <project>              Remove container, volume, Gitea user + repos
   logs <project>                 Tail container logs
 
 Create/recreate options:

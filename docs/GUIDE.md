@@ -1,6 +1,7 @@
 # Guide
 
 - [After a Reboot](#after-a-reboot)
+- [Recreate vs Destroy](#recreate-vs-destroy)
 - [Image Profiles](#image-profiles)
 - [`container/` Directory](#container-directory)
 - [Git Remotes Inside the Container](#git-remotes-inside-the-container)
@@ -27,6 +28,23 @@ python sandbox.py unsetup
 
 This removes all agent containers and their workspace volumes, stops and removes Gitea/router/review containers and their Docker volumes, cleans up per-project networks, and removes the generated `GITEA_ADMIN_TOKEN` from `.env`. 
 Your other `.env` settings are preserved — run `sandbox setup` to start fresh.
+
+## Recreate vs Destroy
+
+Both commands require confirmation before proceeding.
+
+`recreate` gives the agent a clean workspace while keeping its Gitea identity — the agent's fork retains all branches and PRs. Use it to reset a stuck agent or switch profiles without losing git history on Gitea.
+
+`destroy` fully removes the project, including the Gitea mirror. To re-create the project you need to import from GitHub again.
+
+|  | `recreate` | `destroy` |
+|---|---|---|
+| Agent container | Replaced | Removed |
+| Workspace volume | Deleted and recreated | Deleted |
+| `container/` files (CLAUDE.md, etc.) | Re-copied | Deleted |
+| Gitea agent user and repo | Preserved | Deleted |
+| Gitea mirror (sandbox-admin) | Preserved | Deleted |
+
 
 ## Image Profiles
 
