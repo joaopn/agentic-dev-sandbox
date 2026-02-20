@@ -928,118 +928,6 @@ def cmd_sync(args: argparse.Namespace) -> None:
     print("Sync complete.")
 
 
-def cmd_review(args: argparse.Namespace) -> None:
-    cfg = load_config()
-    project = args.project
-    branch = args.branch
-    gitea_user = f"agent-{project}"
-
-    # Ensure we're in a git repo
-    if not run_quiet(["git", "rev-parse", "--is-inside-work-tree"]):
-        die("Not inside a git repository. Run this command from your real repo directory.")
-
-    # Check staging remote
-    r = subprocess.run(["git", "remote"], capture_output=True, text=True)
-    if "staging" not in r.stdout.splitlines():
-        die(f"'staging' remote not configured.\n"
-            f"Run: git remote add staging http://localhost:{cfg.gitea_port}/{gitea_user}/{project}.git")
-
-    full_branch = f"agent/{branch}"
-    ref = f"staging/{full_branch}"
-
-    # 1. Fetch
-    print("Fetching from staging...")
-    run_check(["git", "fetch", "staging"])
-
-    if not run_quiet(["git", "rev-parse", ref]):
-        print(f"Error: Branch {full_branch} not found on staging remote.", file=sys.stderr)
-        print("Available agent branches:")
-        r = subprocess.run(["git", "branch", "-r"], capture_output=True, text=True)
-        for line in r.stdout.splitlines():
-            if "staging/agent/" in line:
-                print(f"  {line.strip().replace('staging/agent/', '')}")
-        sys.exit(1)
-
-    print(f"""
-{'=' * 64}
-  Review: {project} / {full_branch}
-{'=' * 64}""")
-
-    # 2. Security review from Gitea
-    print("\n── Security Review (automated) ──")
-    r = subprocess.run(["git", "rev-parse", ref], capture_output=True, text=True)
-    latest_sha = r.stdout.strip()
-
-    comments = gitea_api_or(cfg, "GET",
-                            f"/repos/{gitea_user}/{project}/git/commits/{latest_sha}/comments", [])
-    found_review = False
-    if isinstance(comments, list):
-        for c in comments:
-            body = c.get("body", "")
-            if body.startswith("## Security Review"):
-                print(body)
-                found_review = True
-    if not found_review:
-        print("(No automated security review found for this commit)")
-
-    # 3. Pre-merge safety checks
-    print("\n── Pre-Merge Safety Checks ──")
-
-    # 3a. Symlinks
-    r = subprocess.run(["git", "ls-tree", "-r", "--full-tree", ref],
-                       capture_output=True, text=True)
-    symlinks = [line for line in r.stdout.splitlines() if line.startswith("120000")]
-    if symlinks:
-        print("\n\u26a0  SYMLINKS DETECTED:")
-        for line in symlinks:
-            parts = line.split(None, 3)
-            if len(parts) == 4:
-                _, _, blob_hash, path = parts
-                target_r = subprocess.run(["git", "cat-file", "-p", blob_hash],
-                                          capture_output=True, text=True)
-                print(f"  {path} -> {target_r.stdout.strip()}")
-        print()
-    else:
-        print("  Symlinks: none")
-
-    # 3b. Auto-execute files
-    auto_exec_paths = [
-        ".envrc", ".vscode/", ".husky/", ".pre-commit-config.yaml", ".gitmodules",
-        "package.json", "setup.py", "setup.cfg", "Makefile", "CMakeLists.txt",
-        ".cargo/config.toml", ".eslintrc.js", ".prettierrc.js",
-    ]
-
-    r = subprocess.run(["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-                       capture_output=True, text=True)
-    base_branch = r.stdout.strip().replace("refs/remotes/origin/", "") if r.returncode == 0 else "main"
-
-    r = subprocess.run(
-        ["git", "diff", f"{base_branch}...{ref}", "--", *auto_exec_paths],
-        capture_output=True, text=True,
-    )
-    if r.stdout.strip():
-        print(f"\n\u26a0  AUTO-EXECUTE FILES MODIFIED (review these first!):")
-        print("\u2500" * 40)
-        print(r.stdout)
-        print("\u2500" * 40)
-    else:
-        print("  Auto-execute files: unchanged")
-
-    # 4. Diffstat
-    print("\n── Diffstat ──")
-    run(["git", "diff", "--stat", f"{base_branch}...{ref}"])
-
-    print(f"""
-{'=' * 64}
-
-Review the full diff with:
-  git diff {base_branch}...{ref}
-  git diff {base_branch}...{ref} -- src/  # specific path
-  git log {base_branch}..{ref}            # commit history
-
-Merge when ready:
-  git merge --squash {ref}
-  git commit""")
 
 
 def cmd_recreate(args: argparse.Namespace) -> None:
@@ -1574,13 +1462,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("project")
     p.set_defaults(func=cmd_sync)
 
-    p = sub.add_parser("review", help="Reviewer management and branch review")
+    p = sub.add_parser("review", help="Reviewer management")
     review_sub = p.add_subparsers(dest="review_command", required=True)
-
-    rp = review_sub.add_parser("show", help="Fetch branch, show security review + safety checks")
-    rp.add_argument("project")
-    rp.add_argument("branch")
-    rp.set_defaults(func=cmd_review)
 
     review_sub.add_parser("setup", help="Configure and start the review service").set_defaults(func=cmd_review_setup)
     review_sub.add_parser("on", help="Start reviewer and connect to all projects").set_defaults(func=cmd_review_on)

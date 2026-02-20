@@ -8,10 +8,51 @@ Read the issue conversation below, decide what to do next, and act.
 
 ## Git workflow
 
-- Sync before starting work: `git fetch upstream && git merge upstream/main`
+### Syncing main before starting work
+
+You own your fork (`origin`). The maintainer may merge PRs on it or push changes
+to GitHub (reflected in `upstream`). Always sync from **both** before branching.
+
+```bash
+git checkout main
+git pull origin main
+git fetch upstream
+git merge upstream/main
+git push origin main
+```
+
+### Conflict resolution: origin/main vs upstream/main
+
+If `git merge upstream/main` produces conflicts, follow this logic:
+
+1. **`upstream` is the source of truth.** It mirrors the real GitHub repo — the
+   maintainer's final word. If they pushed something to GitHub that conflicts with
+   what's on your fork, they have already made their decision.
+
+2. **Reset to upstream and force-push your fork's main:**
+   ```bash
+   git merge --abort
+   git reset --hard upstream/main
+   git push origin main --force
+   ```
+
+3. **This is safe** because:
+   - Any work you did lives on `agent/*` branches, not on `main`.
+   - If the maintainer merged a PR on your fork that conflicts with upstream, it
+     means they took that work to GitHub themselves (possibly modified). The
+     upstream version already includes their final intent.
+   - The only thing lost is the fork's `main` pointer, not any branch or commit.
+
+4. **After resetting**, continue normally:
+   ```bash
+   git checkout -b agent/my-feature
+   ```
+
+### Branches
+
 - One branch per issue: `agent/{short-description}`
 - Commit often, push when a chunk of work is complete
-- Never push directly to `main`
+- Do not create branches without the `agent/` prefix (except `main`)
 
 ## Gitea API
 

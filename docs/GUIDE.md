@@ -6,6 +6,7 @@
 - [`container/` Directory](#container-directory)
 - [Git Remotes Inside the Container](#git-remotes-inside-the-container)
 - [VS Code Remote-SSH](#vs-code-remote-ssh)
+- [Fetch Sandbox](#fetch-sandbox)
 - [Reviewer](#reviewer)
 - [Repo Watch](#repo-watch)
   - [Monitoring](#monitoring)
@@ -106,7 +107,7 @@ Each agent container has two git remotes:
 - **`origin`** — the agent's fork on Gitea (read-write)
 - **`upstream`** — the mirror of the GitHub repo (read-only)
 
-After you merge the agent's work on GitHub and the mirror syncs, the agent must `git fetch upstream && git merge upstream/main` before starting new work. 
+After you merge the agent's work on GitHub and the mirror syncs, the agent must fetch and merge from both `origin` and `upstream` remotes before starting work.
 This is **not done automatically** — it is up to the agent (or the user) to sync. 
 The default `CLAUDE.md` instructs Claude Code to do this before each task.
 
@@ -125,6 +126,26 @@ Displaying the password is not a security issue, as anyone with docker permissio
 **Important**: Verify these VS Code settings are disabled before connecting:
 - `remote.SSH.enableAgentForwarding` — must be off (forwards host SSH keys)
 - Git credential forwarding — must not be configured
+
+## Fetch Sandbox
+
+`fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It adds a `staging` git remote pointing at the local Gitea instance, fetches the requested branch, and runs safety checks before you merge.
+
+```bash
+python fetch-sandbox.py /path/to/your/repo agent/feature-branch
+```
+
+The script performs these steps in order:
+
+1. **Security review** — Queries the Gitea API for PRs matching the branch and displays any flagged automated security review comments posted by `bot-security`.
+2. **Staging remote setup** — If the `staging` remote doesn't exist yet, prompts to add it (pointing at `http://localhost:<GITEA_PORT>/<agent-user>/<project>.git`).
+3. **Fetch** — Runs `git fetch staging` to pull all refs from the agent's Gitea fork.
+4. **Safety checks** — Scans the fetched ref for:
+   - **Symlinks** — lists any symlinks and their targets.
+   - **Auto-execute file modifications** — flags changes to files that run automatically (`.envrc`, `Makefile`, `package.json`, pre-commit hooks, `.gitmodules`, etc.).
+5. **Merge instructions** — Prints the `git diff` and `git merge --squash` commands to review and merge.
+
+Requires `GITEA_ADMIN_TOKEN` in `.env` (set by `sandbox setup`).
 
 ## Reviewer
 
@@ -233,16 +254,6 @@ Set as environment variables when launching repo-watch:
 ```bash
 POLL_INTERVAL=60 REPO_WATCH_MAX_TURNS=50 REPO_WATCH_TIMEOUT=15m ./repo-watch.sh
 ```
-
-### Stopping
-
-- **Ctrl+C** in the repo-watch window kills both the script and the running Claude process.
-- To kill only the current task without stopping the loop, find the claude PID from another byobu window and `kill` it. The loop will continue to the next cycle.
-
-### Retry behavior
-
-If Claude Code errors out, the script retries up to `MAX_RETRIES` times (default: 3)
-before skipping that issue. A new human comment resets the counter.
 
 ## FAQ
 

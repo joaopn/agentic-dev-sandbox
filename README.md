@@ -12,7 +12,7 @@ python sandbox.py setup
 # 2. Creates a sandboxed project with python and pre-install Claude Code in YOLO mode
 python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
 
-# 3. Interacts with the agent 
+# 3. Enters the sandbox
 ## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows
 python sandbox.py attach myproject
 ```
@@ -22,9 +22,9 @@ python sandbox.py attach myproject
 ```mermaid
 graph LR
     Human -->|push| GitHub
-    Human <-->|fetch & add issues| Gitea
+    Human <-->|add issues & fetch| Gitea
     GitHub -->|mirror| Gitea
-    Agent <-->|push & get issues| Gitea
+    Agent <-->|get issues & push| Gitea
     Agent -->|routed| Router -->|NAT| Web((Internet))
 ```
 
@@ -112,17 +112,16 @@ python sandbox.py attach myproject
 ## F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
 ## If --claude-yolo, `claude` will prompt authentication
 
-# 5. Review the agent's work
+# 5. Review and fetch the agent's work
 ## From the Gitea GUI: http://localhost:3000 (default port)
-## From your real repo
-cd ~/repos/myproject
-git remote add staging http://localhost:3000/agent-myproject/myproject.git
-python /path/to/sandbox.py review myproject feature-branch
-## Shows: security review, symlink check, auto-execute file check, diffstat
+## From your real repo: fetch-sandbox handles staging remote setup
+python fetch-sandbox.py <repo path> <branch to fetch>
+## Shows: security review, symlink check, auto-execute file check
+## Prompts to add staging remote + fetch if not configured
 
-# 6. Merge what you want
-git diff main...staging/agent/feature-branch
-git merge --squash staging/agent/feature-branch
+# 6. Merge what you want, e.g.
+git diff main...staging/<branch to fetch>
+git merge --squash staging/<branch to fetch>
 git commit
 git push origin main
 ```
@@ -143,13 +142,15 @@ Commands:
   pause <project|--all>          Freeze container(s) in place (cgroup)
   unpause <project|--all>        Resume frozen container(s)
   sync <project>                 Trigger Gitea mirror sync from GitHub
-  review show <project> <branch>  Fetch, security review, safety checks, diffstat
   review setup                   Configure and start the review service
   review on / off                Toggle reviewer without re-prompting
   recreate <project> [opts]      New container + fresh volume + fresh token
   status                         List all projects, containers, ports
   destroy <project>              Remove container, volume, Gitea user + repos
   logs <project>                 Tail container logs
+
+Standalone script (run from your real repo):
+  python fetch-sandbox.py <repo_path> <branch>   Security review, safety checks, staging remote setup + fetch
 
 Create/recreate options:
   --profile <name>               Agent image profile (required)
