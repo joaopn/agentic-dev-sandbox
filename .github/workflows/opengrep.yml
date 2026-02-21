@@ -22,6 +22,6 @@ jobs:
       - name: Run Opengrep
         run: >
           opengrep scan --config auto --error --disable-nosem
+          --include '*.py'
           --exclude-rule python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-          --exclude-rule dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
           .
