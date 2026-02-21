@@ -7,6 +7,10 @@ COPY review-config.yaml /app/review-config.yaml
 
 WORKDIR /app
 
+RUN adduser -D -u 1000 reviewer
+
+USER reviewer
+
 EXPOSE 8080
 
 CMD ["python3", "review-server.py"]
