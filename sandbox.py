@@ -537,6 +537,72 @@ def update_env_key(key: str, value: str) -> None:
     env_file.write_text("\n".join(lines) + "\n")
 
 
+def ensure_env_file() -> None:
+    """Copy .env.example to .env if .env does not exist."""
+    env_file = SCRIPT_DIR / ".env"
+    env_example = SCRIPT_DIR / ".env.example"
+    if env_file.exists():
+        return
+    if not env_example.exists():
+        die(".env.example not found. Cannot create .env.")
+    shutil.copy2(env_example, env_file)
+    print("Created .env from .env.example.")
+
+
+def read_env_value(key: str) -> str:
+    """Read the value of a key from .env (ignoring commented lines)."""
+    env_file = SCRIPT_DIR / ".env"
+    for line in env_file.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        if "=" in stripped:
+            k, _, v = stripped.partition("=")
+            if k.strip() == key:
+                return v.strip()
+    return ""
+
+
+def prompt_env_settings() -> None:
+    """Prompt for key .env settings that are not yet configured."""
+
+    # ── GITEA_PORT ──
+    current_port = read_env_value("GITEA_PORT")
+    default_port = current_port or "3000"
+    port = input(f"Gitea port [{default_port}]: ").strip()
+    if port and port != default_port:
+        update_env_key("GITEA_PORT", port)
+    elif not current_port:
+        update_env_key("GITEA_PORT", default_port)
+
+    # ── PROJECTS_DIR ──
+    current_dir = read_env_value("PROJECTS_DIR")
+    default_dir = current_dir or "./container_volumes/"
+    proj_dir = input(f"Projects directory [{default_dir}]: ").strip()
+    if proj_dir and proj_dir != default_dir:
+        update_env_key("PROJECTS_DIR", proj_dir)
+    elif not current_dir:
+        update_env_key("PROJECTS_DIR", default_dir)
+
+    # ── GITHUB_PAT ──
+    if not read_env_value("GITHUB_PAT"):
+        print("\nGITHUB_PAT is not set.")
+        print("A GitHub Personal Access Token allows read-only mirroring of private repos.")
+        print("Check the README for how to create one.")
+        answer = input("Would you like to set it now? [y/N] ").strip().lower()
+        if answer in ("y", "yes"):
+            pat = input("Enter your GitHub PAT: ").strip()
+            if pat:
+                update_env_key("GITHUB_PAT", pat)
+                print("GITHUB_PAT saved to .env.")
+            else:
+                print("No value entered — skipping.")
+        else:
+            print("Skipping — you can set GITHUB_PAT in .env later.")
+
+    print()
+
+
 def for_containers(action: str, target: str) -> None:
     """Run a docker action on one project or --all."""
     if target == "--all":
@@ -558,6 +624,8 @@ def for_containers(action: str, target: str) -> None:
 
 
 def cmd_setup(args: argparse.Namespace) -> None:
+    ensure_env_file()
+    prompt_env_settings()
     cfg = load_config()
 
     print("=== Sandbox Setup ===")
