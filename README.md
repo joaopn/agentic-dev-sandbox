@@ -1,8 +1,34 @@
+<div align="center">
+
 # Agentic Dev Sandbox
+
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose_v2-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
 
 A simple, but opinionated, sandboxed development environment for agentic LLMs. The agent gets full autonomy inside of a container, but is isolated from any user data, credential or private network outside of what it is explicitly given.
 
 *As it should be.*
+
+</div>
+
+---
+
+### Table of Contents
+
+[Very Quick Start](#very-quick-start) ·
+[How it works](#how-it-works) ·
+[Repo Watch](#repo-watch) ·
+[Reviewer](#reviewer) ·
+[Prerequisites](#prerequisites)
+
+[Quick Start](#quick-start) ·
+[CLI Reference](#cli-reference) ·
+[File Structure](#file-structure) ·
+[Roadmap](#roadmap) ·
+[Further Reading](#further-reading)
+
+---
 
 ## Very Quick Start
 ```bash
@@ -17,7 +43,7 @@ python sandbox.py create https://github.com/you/myproject --profile python --cla
 python sandbox.py attach myproject
 
 # 4. Fetch commited code
-python fetch-sandbox.py <user repo folder> <remote branch name>
+python fetch-sandbox.py <local myproject repo> <remote branch name>
 ```
 
 ## How it works
@@ -55,7 +81,7 @@ To use:
 claude                # authenticate first
 ./repo-watch.sh       # agent starts monitoring repo — blocks terminal
 # F2 for a new byobu window
-./agent-watch.sh      # view the agent activity in real-time (optional) 
+./agent-watch.sh      # view the agent activity in real-time (optional)
 ```
 
 The last agent comment also attaches its full internal (thinking) log as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
@@ -70,7 +96,7 @@ An isolated bot (`bot-security`) can review PRs for security issues on command. 
 
 To use:
 ```bash
-python sandbox.py review setup   # configure provider, key, model (one-time), starts 
+python sandbox.py review setup   # configure provider, key, model (one-time), starts
 ```
 
 See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and customization.
@@ -115,11 +141,14 @@ python sandbox.py attach myproject
 
 ## From the CLI:
 python fetch-sandbox.py <repo path> <branch to fetch>
-## Shows: security review, symlink check, auto-execute file check
+## Shows security review, symlink check, auto-execute file check
 ## Adds the changes as unstaged changes to the current branch
 ```
 
-## CLI Reference
+---
+
+<details>
+<summary><h2>CLI Reference</h2></summary>
 
 ```
 sandbox <command> [options]
@@ -143,7 +172,7 @@ Commands:
   logs <project>                 Tail container logs
 
 Standalone script (run from your real repo):
-  python fetch-sandbox.py <repo_path> <branch>   Security review, safety checks, staging remote setup + fetch
+  python fetch-sandbox.py <repo_path> <branch>   Security review, safety checks, staging remote setup + merge
 
 Create/recreate options:
   --profile <name>               Agent image profile (required)
@@ -156,7 +185,10 @@ Create/recreate options:
   --claude-yolo                  Install Claude Code, auto-configure bypass permissions
 ```
 
-## File Structure
+</details>
+
+<details>
+<summary><h2>File Structure</h2></summary>
 
 ```
 agentic-dev-sandbox/
@@ -185,6 +217,10 @@ agentic-dev-sandbox/
     ├── GUIDE.md                  Profiles, reviewer, VS Code, FAQ, repo-watch details
     └── SECURITY.md               Security model, network isolation, threat table
 ```
+
+</details>
+
+---
 
 ## Roadmap
 - Docker-in-Docker support
