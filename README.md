@@ -9,12 +9,15 @@ A simple, but opinionated, sandboxed development environment for agentic LLMs. T
 # 1. One-time setup (starts Gitea, router)
 python sandbox.py setup
 
-# 2. Creates a sandboxed project with python and pre-install Claude Code in YOLO mode
+# 2. Create a sandboxed project with python and pre-install Claude Code in YOLO mode
 python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
 
-# 3. Enters the sandbox
-## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows
+# 3. Enter the sandbox
+## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
 python sandbox.py attach myproject
+
+# 4. Fetch commited code
+python fetch-sandbox.py <user repo folder> <remote branch name>
 ```
 
 ## How it works
@@ -67,8 +70,7 @@ An isolated bot (`bot-security`) can review PRs for security issues on command. 
 
 To use:
 ```bash
-python sandbox.py review setup   # configure provider, key, model (one-time)
-python sandbox.py review on      # start after reboot
+python sandbox.py review setup   # configure provider, key, model (one-time), starts 
 ```
 
 See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and customization.
@@ -90,17 +92,10 @@ To generate the GitHub PAT:
 ## Quick Start
 
 ```bash
-# 1. Clone and configure
-git clone https://github.com/joaopn/agentic-dev-sandbox.git
-cd agentic-dev-sandbox
-
-cp .env.example .env
-# Edit .env: set GITHUB_PAT for private repos
-
-# 2. One-time setup (starts Gitea, router)
+# 1. One-time setup (starts Gitea, router)
 python sandbox.py setup
 
-# Optional: configure and start the reviewer service
+# 2 [Optional]: configure and start the reviewer service
 python sandbox.py review setup
 
 # 3. Create a sandboxed project with python and Claude Code
@@ -112,18 +107,16 @@ python sandbox.py attach myproject
 ## F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
 ## If --claude-yolo, `claude` will prompt authentication
 
-# 5. Review and fetch the agent's work
+# 5. Review the agent's commited work
 ## From the Gitea GUI: http://localhost:3000 (default port)
-## From your real repo: fetch-sandbox handles staging remote setup
+
+## From your real repo: add the Gitea remote with
+## `git remote add staging http://localhost:3000/agent-myproject/myproject.git`
+
+## From the CLI:
 python fetch-sandbox.py <repo path> <branch to fetch>
 ## Shows: security review, symlink check, auto-execute file check
-## Prompts to add staging remote + fetch if not configured
-
-# 6. Merge what you want, e.g.
-git diff main...staging/<branch to fetch>
-git merge --squash staging/<branch to fetch>
-git commit
-git push origin main
+## Adds the changes as unstaged changes to the current branch
 ```
 
 ## CLI Reference
@@ -192,6 +185,10 @@ agentic-dev-sandbox/
     ├── GUIDE.md                  Profiles, reviewer, VS Code, FAQ, repo-watch details
     └── SECURITY.md               Security model, network isolation, threat table
 ```
+
+## Roadmap
+- Docker-in-Docker support
+- Script support for other agentic platforms besides Claude Code (Codex, Aider)
 
 ## Further Reading
 

@@ -254,16 +254,21 @@ def main() -> None:
     # ── Step 3: Safety checks (git-based, needs fetched refs) ──
     base_branch = run_safety_checks(repo_path, ref)
 
-    # ── Step 4: Instructions ──
+    # ── Step 4: Merge ──
     print(f"\n{'=' * 64}")
-    print(f"""
-Review on your git client, or:
-  git diff {base_branch}...{ref}
 
-Merge when ready:
-  git merge --squash {ref}
-  git commit
-  git push origin {base_branch}""")
+    # Get current local branch name
+    r = git(repo_path, "rev-parse", "--abbrev-ref", "HEAD", check=False)
+    local_branch = r.stdout.strip() if r.returncode == 0 else "unknown"
+
+    r = git(repo_path, "merge", "--squash", ref, check=False)
+    if r.returncode != 0:
+        print(f"\nMerge failed:\n{r.stderr.strip()}")
+        print("Resolve conflicts or stash local changes and retry.")
+        return
+
+    git(repo_path, "reset", "HEAD", check=False)
+    print(f"\nDone — changes applied as unstaged modifications on {local_branch}.")
 
 
 if __name__ == "__main__":
