@@ -1,0 +1,21 @@
+name: Opengrep
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**/*.py'
+  pull_request:
+    paths:
+      - '**/*.py'
+
+jobs:
+  opengrep:
+    name: Opengrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Opengrep
+        run: curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
+      - name: Run Opengrep
+        run: opengrep scan --config auto --error .
