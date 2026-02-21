@@ -41,7 +41,7 @@ python sandbox.py create https://github.com/you/myproject --profile python --cla
 ## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
 python sandbox.py attach myproject
 
-# 4. Fetch commited code
+# 4. Fetch committed code
 python fetch-sandbox.py <local myproject repo> <remote branch name>
 ```
 
@@ -134,7 +134,7 @@ python sandbox.py attach myproject
 ## F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
 ## If --claude-yolo, `claude` will prompt authentication
 
-# 5. Review the agent's commited work
+# 5. Review the agent's committed work
 ## From the Gitea GUI: http://localhost:3000 (default port)
 
 ## From your real repo: add the Gitea remote with

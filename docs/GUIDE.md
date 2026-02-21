@@ -265,6 +265,6 @@ Create a custom profile with a CUDA base image if your workload needs one — th
 ### Rootless Docker support?
 
 If you already run [rootless Docker](https://docs.docker.com/engine/security/rootless/), the sandbox works as-is with no changes.
-The added benefit is that a container escape lands as your unprivileged user rather than root, and granted capabilities (CHOWN,SETUID, etc.) are scoped to a user namespace that can't affect the real host.
+The added benefit is that a container escape lands as your unprivileged user rather than root, and granted capabilities (CHOWN, SETUID, etc.) are scoped to a user namespace that can't affect the real host.
 This doesn't prevent the escape itself, but limits the blast radius.
 Not required — regular Docker with the network isolation above is the intended baseline.
