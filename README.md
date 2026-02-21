@@ -16,7 +16,6 @@ A simple, but opinionated, sandboxed development environment for agentic LLMs. T
 
 ### Table of Contents
 
-[Very Quick Start](#very-quick-start) ·
 [How it works](#how-it-works) ·
 [Repo Watch](#repo-watch) ·
 [Reviewer](#reviewer) ·
@@ -30,7 +29,7 @@ A simple, but opinionated, sandboxed development environment for agentic LLMs. T
 
 ---
 
-## Very Quick Start
+### TL;DR
 ```bash
 # 1. One-time setup (starts Gitea, router)
 python sandbox.py setup
@@ -64,7 +63,8 @@ graph LR
 - You review code e.g. in the Gitea webui and fetch it back
 - You merge what you want back to GitHub (human-in-the-loop)
 
-See [SECURITY.md](docs/SECURITY.md) for the full threat model and network isolation details.
+> [!NOTE]
+> See [SECURITY.md](docs/SECURITY.md) for the full threat model and network isolation details.
 
 ## Repo Watch
 
@@ -106,9 +106,10 @@ See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and cus
 - Docker with Compose v2 (`docker compose`)
 - Python 3.10+
 
-Optional:
-- `GITHUB_PAT` — A read-only GitHub Personal Access Token (PAT), **only if mirroring private repos**. Only Gitea sees it.
-- `REVIEWER_API_KEY` — an LLM API key needed if the optional `bot-security` is enabled (supports Anthropic, OpenAI, OpenRouter, or local). Only the reviewer service sees it.
+> [!TIP]
+> Optional:
+> - `GITHUB_PAT` — A read-only GitHub Personal Access Token (PAT), **only if mirroring private repos**. Only Gitea sees it.
+> - `REVIEWER_API_KEY` — an LLM API key needed if the optional `bot-security` is enabled (supports Anthropic, OpenAI, OpenRouter, or local). Only the reviewer service sees it.
 
 To generate the GitHub PAT:
   1. Go to https://github.com/settings/personal-access-tokens/new
@@ -230,3 +231,7 @@ agentic-dev-sandbox/
 
 - **[docs/GUIDE.md](docs/GUIDE.md)** — Image profiles, reviewer configuration, VS Code Remote-SSH, networking details, `container/` directory, git remotes, repo-watch internals, FAQ.
 - **[docs/SECURITY.md](docs/SECURITY.md)** — Threat model, network isolation architecture, what's prevented and what isn't.
+
+<div align="center">
+<sub>Licensed under <a href="LICENSE">AGPL-3.0</a></sub>
+</div>
