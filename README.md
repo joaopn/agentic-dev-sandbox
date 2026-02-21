@@ -35,7 +35,7 @@ graph LR
 - **Agent containers** are per-project, disposable, and hardened. They can't access your LAN
   - [Optional] **Repo Watch** has the agent monitoring Gitea Issues and working on them automatically
   - [Optional] **Review service** posts automated security reviews (backdoors, exfiltration, dependency manipulation) on `/security` command
-- You review code in the Gitea webui or your IDE using `git fetch` from Gitea
+- You review code e.g. in the Gitea webui and fetch it back
 - You merge what you want back to GitHub (human-in-the-loop)
 
 See [SECURITY.md](docs/SECURITY.md) for the full threat model and network isolation details.
