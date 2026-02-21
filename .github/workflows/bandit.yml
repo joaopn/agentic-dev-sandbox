@@ -1,6 +1,7 @@
 name: Bandit
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - '**/*.py'
