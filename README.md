@@ -2,9 +2,12 @@
 
 # Agentic Dev Sandbox
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose_v2-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
+[![ShellCheck](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/shellcheck.yml)
+[![Bandit](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/bandit.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/bandit.yml)
+[![Trivy](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/trivy.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/trivy.yml)
+[![Docker Scout](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/docker-scout.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/docker-scout.yml)
 
 A simple, but opinionated, sandboxed development environment for agentic LLMs. The agent gets full autonomy inside of a container, but is isolated from any user data, credential or private network outside of what it is explicitly given.
 

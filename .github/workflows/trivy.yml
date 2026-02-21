@@ -1,0 +1,24 @@
+name: Trivy
+
+on:
+  push:
+    paths:
+      - '**/Dockerfile*'
+      - 'docker-compose.yml'
+  pull_request:
+    paths:
+      - '**/Dockerfile*'
+      - 'docker-compose.yml'
+
+jobs:
+  trivy:
+    name: Trivy Config Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy config scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: CRITICAL,HIGH,MEDIUM
