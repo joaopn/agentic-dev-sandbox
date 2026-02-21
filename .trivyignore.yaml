@@ -1,0 +1,5 @@
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - "router/Dockerfile"
+    statement: Router requires root for iptables/NET_ADMIN

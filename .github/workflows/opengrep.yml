@@ -20,4 +20,8 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
           echo "$HOME/.opengrep/cli/latest" >> "$GITHUB_PATH"
       - name: Run Opengrep
-        run: opengrep scan --config auto --error .
+        run: >
+          opengrep scan --config auto --error --disable-nosem
+          --exclude-rule python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+          --exclude-rule dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
+          .

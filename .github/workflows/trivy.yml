@@ -24,3 +24,4 @@ jobs:
           scan-ref: .
           severity: CRITICAL,HIGH
           exit-code: '1'
+          trivyignores: .trivyignore.yaml
