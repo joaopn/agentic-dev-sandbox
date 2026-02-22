@@ -3,6 +3,7 @@
 [◾ Threat Model](#-threat-model)
 [◾ Network Isolation](#-network-isolation)
 [◾ Static Analysis](#-static-analysis)
+[◾ Barrier Testing](#-barrier-testing)
 [◾ Security FAQ](#-security-faq)
 
 ---
@@ -105,6 +106,11 @@ All exceptions are defined in the workflow files or `.trivyignore.yaml`, visible
 ### Not covered
 
 The static analysis scans Dockerfiles as text (config mode) — it does **not** pull, build, or scan container images. This means **base image vulnerabilities** (CVEs in `alpine:3.20`, `python:3.12-alpine`, `continuumio/miniconda3`, etc.) are not detected. These depend on upstream maintainers and the user's local image freshness.
+
+
+## ◾ Barrier Testing
+
+`pentest.sh` is a passive security posture checker that validates every barrier in the threat model above. Run it on the host (some checks fail) and in the sandbox (all pass) — the delta is the proof. See [PENTESTING.md](PENTESTING.md) for full documentation, including why active exploitation testing and agentic testing are excluded.
 
 
 ## ◾ Security FAQ
