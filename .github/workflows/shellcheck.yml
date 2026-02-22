@@ -15,5 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Reject inline ShellCheck directives
+        run: |
+          if grep -rn '# shellcheck disable' --include='*.sh' .; then
+            echo "::error::Inline shellcheck directives are not allowed. Manage exceptions in the workflow."
+            exit 1
+          fi
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@master
