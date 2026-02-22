@@ -18,16 +18,16 @@ A simple, but opinionated, sandboxed development environment for agentic LLMs. T
 
 ### Table of Contents
 
-[How it works](#how-it-works) ·
-[Repo Watch](#repo-watch) ·
-[Reviewer](#reviewer) ·
-[Prerequisites](#prerequisites)
+[◾ How it works](#-how-it-works)
+[◾ Repo Watch](#-repo-watch)
+[◾ Reviewer](#-reviewer)
+[◾ Prerequisites](#-prerequisites)
 
-[Quick Start](#quick-start) ·
-[CLI Reference](#cli-reference) ·
-[File Structure](#file-structure) ·
-[Roadmap](#roadmap) ·
-[Further Reading](#further-reading)
+[◾ Quick Start](#-quick-start)
+[◾ CLI Reference](#-cli-reference)
+[◾ File Structure](#-file-structure)
+[◾ Roadmap](#-roadmap)
+[◾ Further Reading](#-further-reading)
 
 ---
 
@@ -47,7 +47,7 @@ python sandbox.py attach myproject
 python fetch-sandbox.py <local myproject repo> <remote branch name>
 ```
 
-## How it works
+## ◾ How it works
 
 ```mermaid
 graph LR
@@ -66,9 +66,9 @@ graph LR
 - You merge what you want back to GitHub (human-in-the-loop)
 
 > [!NOTE]
-> See [SECURITY.md](docs/SECURITY.md) for the full threat model and network isolation details.
+> See [SECURITY.md](docs/SECURITY.md) for the full threat model, network isolation details, and static analysis design.
 
-## Repo Watch
+## ◾ Repo Watch
 
 The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
 
@@ -88,7 +88,7 @@ claude                # authenticate first
 
 The last agent comment also attaches its full internal (thinking) log as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
 
-## Reviewer
+## ◾ Reviewer
 
 An isolated bot (`bot-security`) can review PRs for security issues on command. Comment `/security` on any PR to trigger a review. The bot posts findings as a PR comment.
 
@@ -103,7 +103,7 @@ python sandbox.py review setup   # configure provider, key, model (one-time), st
 
 See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and customization.
 
-## Prerequisites
+## ◾ Prerequisites
 
 - Docker with Compose v2 (`docker compose`)
 - Python 3.10+
@@ -118,7 +118,7 @@ To generate the GitHub PAT:
   2. In Repository access, select the target repos (or all).
   3. In Permissions, click on Add Permissions and add **Contents**. Ensure it has **Access: Read-only**.
 
-## Quick Start
+## ◾ Quick Start
 
 ```bash
 # 1. One-time setup (starts Gitea, router)
@@ -151,7 +151,7 @@ python fetch-sandbox.py <repo path> <branch to fetch>
 ---
 
 <details>
-<summary><h2>CLI Reference</h2></summary>
+<summary><h2>◾ CLI Reference</h2></summary>
 
 ```
 sandbox <command> [options]
@@ -191,7 +191,7 @@ Create/recreate options:
 </details>
 
 <details>
-<summary><h2>File Structure</h2></summary>
+<summary><h2>◾ File Structure</h2></summary>
 
 ```
 agentic-dev-sandbox/
@@ -225,14 +225,14 @@ agentic-dev-sandbox/
 
 ---
 
-## Roadmap
+## ◾ Roadmap
 - Docker-in-Docker support
 - Script support for other agentic platforms besides Claude Code (Codex, Aider)
 
-## Further Reading
+## ◾ Further Reading
 
 - **[docs/GUIDE.md](docs/GUIDE.md)** — Image profiles, reviewer configuration, VS Code Remote-SSH, networking details, `container/` directory, git remotes, repo-watch internals, FAQ.
-- **[docs/SECURITY.md](docs/SECURITY.md)** — Threat model, network isolation architecture, what's prevented and what isn't.
+- **[docs/SECURITY.md](docs/SECURITY.md)** — Threat model, network isolation, static analysis design, what's prevented and what isn't.
 
 <div align="center">
 <sub>Licensed under <a href="LICENSE">AGPL-3.0</a></sub>

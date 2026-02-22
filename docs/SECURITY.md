@@ -1,6 +1,13 @@
 # Security
 
-## Threat Model
+[◾ Threat Model](#-threat-model)
+[◾ Network Isolation](#-network-isolation)
+[◾ Static Analysis](#-static-analysis)
+[◾ Security FAQ](#-security-faq)
+
+---
+
+## ◾ Threat Model
 
 | Threat | Defense |
 |---|---|
@@ -23,7 +30,7 @@
 - LLM review missing a subtle backdoor (it's a filter, not a guarantee)
 - Container escape via unpatched kernel/runc CVE (same risk as any container)
 
-## Network Isolation
+## ◾ Network Isolation
 
 Each agent gets its own **internal Docker network** (`sandbox-net-{project}`) with
 no gateway — it cannot reach the internet or your LAN directly. A NAT router container
@@ -67,7 +74,40 @@ This means:
   container (`docker run --rm --privileged --network container:<agent> alpine ip route ...`).
   The agent never receives NET_ADMIN and cannot modify its own routing.
 
-## Security FAQ
+
+## ◾ Static Analysis
+
+Three CI workflows run on every push and pull request. Their purpose is to catch mistakes: no accidental shell bugs, no known Dockerfile misconfigurations, no obvious Python security anti-patterns.
+
+| Workflow | Tool | Scope | Trigger |
+|---|---|---|---|
+| ShellCheck | [ShellCheck](https://www.shellcheck.net/) | All `.sh` files | `**/*.sh` |
+| Opengrep | [Opengrep](https://opengrep.dev/) | All `.py` files | `**/*.py` |
+| Trivy | [Trivy](https://trivy.dev/) config scan | Dockerfiles, docker-compose.yml | `**/Dockerfile*`, `docker-compose.yml` |
+
+### Design principles
+
+**No inline suppressions.** All three workflows enforce that commits cannot bypass checks by adding comments to source files:
+
+- **Opengrep** runs with `--disable-nosem`, which ignores `# nosemgrep` / `# nosem` comments
+- **Trivy** uses a centralized `.trivyignore.yaml` passed via `TRIVY_IGNOREFILE`, which ignores `# trivy:ignore` comments
+- **ShellCheck** has no built-in flag to ignore directives, so a pre-scan step rejects any `# shellcheck disable` found in `.sh` files
+
+All exceptions are defined in the workflow files or `.trivyignore.yaml`, visible in the repo root and subject to code review.
+
+### Exceptions
+
+| Check | Tool | Scope | Reason |
+|---|---|---|---|
+| AVD-DS-0002 (missing `USER`) | Trivy | `router/Dockerfile` only | The router requires root for iptables/NET_ADMIN. Other Dockerfiles enforce non-root users. |
+| `dynamic-urllib-use-detected` | Opengrep | All `.py` files | CLI tools construct URLs from user-supplied arguments (repo URLs, API endpoints). This is expected behavior, not injection. |
+
+### Not covered
+
+The static analysis scans Dockerfiles as text (config mode) — it does **not** pull, build, or scan container images. This means **base image vulnerabilities** (CVEs in `alpine:3.20`, `python:3.12-alpine`, `continuumio/miniconda3`, etc.) are not detected. These depend on upstream maintainers and the user's local image freshness.
+
+
+## ◾ Security FAQ
 
 ### Why not use dev containers?
 

@@ -1,19 +1,17 @@
 # Guide
 
-- [After a Reboot](#after-a-reboot)
-- [Recreate vs Destroy](#recreate-vs-destroy)
-- [Image Profiles](#image-profiles)
-- [`container/` Directory](#container-directory)
-- [Git Remotes Inside the Container](#git-remotes-inside-the-container)
-- [VS Code Remote-SSH](#vs-code-remote-ssh)
-- [Fetch Sandbox](#fetch-sandbox)
-- [Reviewer](#reviewer)
-- [Repo Watch](#repo-watch)
-  - [Monitoring](#monitoring)
-  - [Configuration](#configuration)
-- [FAQ](#faq)
+[◾ After a Reboot](#-after-a-reboot)
+[◾ Recreate vs Destroy](#-recreate-vs-destroy)
+[◾ Image Profiles](#-image-profiles)
+[◾ `container/` Directory](#-container-directory)
+[◾ Git Remotes Inside the Container](#-git-remotes-inside-the-container)
+[◾ VS Code Remote-SSH](#-vs-code-remote-ssh)
+[◾ Fetch Sandbox](#-fetch-sandbox)
+[◾ Reviewer](#-reviewer)
+[◾ Repo Watch](#-repo-watch)
+[◾ FAQ](#-faq)
 
-## After a Reboot
+## ◾ After a Reboot
 
 ```bash
 docker compose up -d           # Gitea, router
@@ -30,7 +28,7 @@ python sandbox.py unsetup
 This removes all agent containers and their workspace volumes, stops and removes Gitea/router/review containers and their Docker volumes, cleans up per-project networks, and removes the generated `GITEA_ADMIN_TOKEN` from `.env`. 
 Your other `.env` settings are preserved — run `sandbox setup` to start fresh.
 
-## Recreate vs Destroy
+## ◾ Recreate vs Destroy
 
 Both commands require confirmation before proceeding.
 
@@ -47,7 +45,7 @@ Both commands require confirmation before proceeding.
 | Gitea mirror (sandbox-admin) | Preserved | Deleted |
 
 
-## Image Profiles
+## ◾ Image Profiles
 
 Profiles let you pick different base environments for agent containers. Each profile is a Dockerfile in `agent/` named `Dockerfile.<profile>`.
 
@@ -89,7 +87,7 @@ To add a custom profile, create `agent/Dockerfile.myprofile`. Copy an existing D
 | `iputils-ping` | Useful for debugging network isolation |
 | `btop` | Useful for a global view of the container activity |
 
-## `container/` Directory
+## ◾ `container/` Directory
 
 Any files placed in `container/` are copied into each agent's home directory volume at `/home/agent/`.
 Use this to provide config files or custom instructions to every agent. For key-based SSH access,
@@ -101,7 +99,7 @@ By default it ships with:
 - `repo-watch-prompt.md` — prompt template for repo-watch
 - `agent-watch.sh` — real-time viewer for agent activity (see [Monitoring](#monitoring))
 
-## Git Remotes Inside the Container
+## ◾ Git Remotes Inside the Container
 
 Each agent container has two git remotes:
 - **`origin`** — the agent's fork on Gitea (read-write)
@@ -111,7 +109,7 @@ After you merge the agent's work on GitHub and the mirror syncs, the agent must 
 This is **not done automatically** — it is up to the agent (or the user) to sync. 
 The default `CLAUDE.md` instructs Claude Code to do this before each task.
 
-## VS Code Remote-SSH
+## ◾ VS Code Remote-SSH
 
 Connect to agent containers via VS Code Remote-SSH for full IDE access:
 
@@ -127,7 +125,7 @@ Displaying the password is not a security issue, as anyone with docker permissio
 - `remote.SSH.enableAgentForwarding` — must be off (forwards host SSH keys)
 - Git credential forwarding — must not be configured
 
-## Fetch Sandbox
+## ◾ Fetch Sandbox
 
 `fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It adds a `staging` git remote pointing at the local Gitea instance, fetches the requested branch, and runs safety checks before you merge.
 
@@ -147,7 +145,7 @@ The script performs these steps in order:
 
 Requires `GITEA_ADMIN_TOKEN` in `.env` (set by `sandbox setup`).
 
-## Reviewer
+## ◾ Reviewer
 
 The review service runs as a bot that responds to slash commands in PR comments. Comment `/security` on any PR to trigger an automated security review. It runs in a separate container with its own LLM API key — the agent never interacts with it.
 
@@ -186,7 +184,7 @@ Default endpoints are in `review/review-config.yaml`. Override with `REVIEWER_EN
 **Customizing the review prompt:** Edit `review/review-config.yaml`. The prompt must contain a `{diff}` placeholder.
 Rebuild the review container after changes: `sandbox review off && sandbox review setup`.
 
-## Repo Watch
+## ◾ Repo Watch
 
 `repo-watch.sh` is a bash script that turns the agent into an autonomous developer you interact with through Gitea issues. 
 It polls the Gitea API, detects new activity, and invokes Claude Code to handle it.
@@ -255,7 +253,7 @@ Set as environment variables when launching repo-watch:
 POLL_INTERVAL=60 REPO_WATCH_MAX_TURNS=50 REPO_WATCH_TIMEOUT=15m ./repo-watch.sh
 ```
 
-## FAQ
+## ◾ FAQ
 
 ### GPU / CUDA support?
 
