@@ -17,6 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Reject inline Trivy directives
+        run: |
+          if grep -rn '# trivy:ignore' --include='Dockerfile*' --include='*.yml' --include='*.yaml' .; then
+            echo "::error::Inline trivy:ignore directives are not allowed. Manage exceptions in .trivyignore.yaml."
+            exit 1
+          fi
       - name: Run Trivy config scan
         uses: aquasecurity/trivy-action@master
         # DS-0002 (missing USER) is scoped to router/Dockerfile only via

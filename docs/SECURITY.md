@@ -90,7 +90,7 @@ Three CI workflows run on every push and pull request. Their purpose is to catch
 **No inline suppressions.** All three workflows enforce that commits cannot bypass checks by adding comments to source files:
 
 - **Opengrep** runs with `--disable-nosem`, which ignores `# nosemgrep` / `# nosem` comments
-- **Trivy** uses a centralized `.trivyignore.yaml` passed via `TRIVY_IGNOREFILE`, which ignores `# trivy:ignore` comments
+- **Trivy** has no built-in flag to ignore directives, so a pre-scan step rejects any `# trivy:ignore` found in Dockerfiles and compose files. Exceptions are centralized in `.trivyignore.yaml` (passed via `TRIVY_IGNOREFILE`)
 - **ShellCheck** has no built-in flag to ignore directives, so a pre-scan step rejects any `# shellcheck disable` found in `.sh` files
 
 All exceptions are defined in the workflow files or `.trivyignore.yaml`, visible in the repo root and subject to code review.
