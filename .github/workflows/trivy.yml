@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Reject inline Trivy directives
         run: |
-          if grep -rn '# trivy:ignore' --include='Dockerfile*' --include='*.yml' --include='*.yaml' .; then
+          if grep -rn '# trivy:ignore' --include='Dockerfile*' --include='*.yml' --include='*.yaml' --exclude='trivy.yml' .; then
             echo "::error::Inline trivy:ignore directives are not allowed. Manage exceptions in .trivyignore.yaml."
             exit 1
           fi
