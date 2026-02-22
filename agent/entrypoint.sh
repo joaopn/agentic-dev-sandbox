@@ -49,7 +49,6 @@ git config --global push.default current
 git config --global credential.helper store
 
 # Store Gitea credentials for git push/pull
-GITEA_HOST=$(echo "$GITEA_URL" | sed 's|https\?://||')
 echo "${GITEA_URL//:\/\//:\/\/${GITEA_USER}:${GITEA_TOKEN}@}" > ~/.git-credentials
 chmod 600 ~/.git-credentials
 git config --global credential.helper 'store --file ~/.git-credentials'
@@ -63,7 +62,7 @@ fi
 if [[ "${CLAUDE_YOLO:-}" == "true" ]]; then
     # Ensure ~/.local/bin is in PATH
     if ! grep -q '.local/bin' ~/.bashrc 2>/dev/null; then
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+        echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.bashrc
     fi
 
     # Pre-configure settings (no network needed, only on first run)

@@ -99,7 +99,8 @@ ${open_prs:-_None._}
 - Repo directory: ${REPO_DIR}
 CONTEXT
 
-    local log_file="${LOG_DIR}/${item_type,,}-${number}-$(date '+%Y%m%d-%H%M%S').jsonl"
+    local log_file
+    log_file="${LOG_DIR}/${item_type,,}-${number}-$(date '+%Y%m%d-%H%M%S').jsonl"
     LAST_LOG_FILE="$log_file"
     ln -sfn "$log_file" "$CURRENT_LOG_LINK"
 
@@ -150,9 +151,8 @@ CONTEXT
 }
 
 # Check if an item has exceeded retry limit.
-# Resets when a new human comment appears (tracked by comment count in fail file).
 check_retries() {
-    local number="$1" current_comments="$2"
+    local number="$1"
     local fail_file="${FAIL_DIR}/${number}"
     [[ ! -f "$fail_file" ]] && return 0  # no failures, proceed
     local fail_count
@@ -192,8 +192,9 @@ parse_log() {
     local log_file="$1"
     local basename
     basename=$(basename "$log_file" .jsonl)
-    local parsed_file="$(dirname "$log_file")/agent_log_${basename}.md"
-    > "$parsed_file"
+    local parsed_file
+    parsed_file="$(dirname "$log_file")/agent_log_${basename}.md"
+    : > "$parsed_file"
 
     while IFS= read -r line; do
         [[ -z "$line" || "${line:0:1}" != "{" ]] && continue
@@ -204,7 +205,9 @@ parse_log() {
                 # Thinking blocks (blockquoted)
                 thinking=$(echo "$line" | jq -r '.message.content[]? | select(.type == "thinking") | .thinking' 2>/dev/null) || true
                 if [[ -n "$thinking" ]]; then
-                    echo "$thinking" | sed 's/^/> /' >> "$parsed_file"
+                    while IFS= read -r _line; do
+                        printf '> %s\n' "$_line"
+                    done <<< "$thinking" >> "$parsed_file"
                     echo "" >> "$parsed_file"
                 fi
                 # Tool name indicators
@@ -381,7 +384,7 @@ while true; do
         fi
 
         # Skip if too many consecutive failures
-        if ! check_retries "$number" "$num_comments"; then
+        if ! check_retries "$number"; then
             continue
         fi
 
@@ -430,7 +433,7 @@ while true; do
             fi
 
             # Skip if too many consecutive failures
-            if ! check_retries "$pr_number" "0"; then
+            if ! check_retries "$pr_number"; then
                 continue
             fi
 
