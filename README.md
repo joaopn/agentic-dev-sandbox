@@ -8,11 +8,27 @@
 [![Opengrep](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/opengrep.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/opengrep.yml)
 [![Trivy](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/trivy.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/trivy.yml)
 
-A simple, but opinionated, sandboxed development environment for agentic LLMs. The agent gets full autonomy inside of a container, but is isolated from any user data, credential or private network outside of what it is explicitly given.
+A simple, but opinionated, per-project sandboxed development environment for agentic LLMs. The agent gets full autonomy inside of a container, but is isolated from any user data, credential or private network outside of what it is explicitly given.
 
 *As it should be.*
 
 </div>
+
+### TL;DR
+```bash
+# 1. One-time setup (starts Gitea, router)
+python sandbox.py setup
+
+# 2. Create a sandboxed project with python and pre-install Claude Code in YOLO mode
+python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
+
+# 3. Enter the sandbox
+## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
+python sandbox.py attach myproject
+
+# 4. Fetch committed code
+python fetch-sandbox.py <myproject local repo> <remote branch name>
+```
 
 ---
 
@@ -30,22 +46,6 @@ A simple, but opinionated, sandboxed development environment for agentic LLMs. T
 [◾ Further Reading](#-further-reading)
 
 ---
-
-### TL;DR
-```bash
-# 1. One-time setup (starts Gitea, router)
-python sandbox.py setup
-
-# 2. Create a sandboxed project with python and pre-install Claude Code in YOLO mode
-python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
-
-# 3. Enter the sandbox
-## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
-python sandbox.py attach myproject
-
-# 4. Fetch committed code
-python fetch-sandbox.py <local myproject repo> <remote branch name>
-```
 
 ## ◾ How it works
 
@@ -66,14 +66,14 @@ graph LR
 - You merge what you want back to GitHub (human-in-the-loop)
 
 > [!NOTE]
-> See [SECURITY.md](docs/SECURITY.md) for the full threat model, network isolation details, and static analysis design.
+> See [SECURITY.md](docs/SECURITY.md) for the full threat model, network isolation details, and static analysis design. See [BARRIER-CHECK.md](docs/BARRIER-CHECK.md) for container verification.
 
 ## ◾ Repo Watch
 
 The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
 
 <p align="center">
-  <img src="docs/pirate.png" width="600" alt="Repo Watch example">
+  <img src="docs/img/pirate.png" width="600" alt="Repo Watch example">
 </p>
 
 
@@ -93,7 +93,7 @@ The last agent comment also attaches its full internal (thinking) log as formatt
 An isolated bot (`bot-security`) can review PRs for security issues on command. Comment `/security` on any PR to trigger a review. The bot posts findings as a PR comment.
 
 <p align="center">
-  <img src="docs/bot.png" width="600" alt="Repo Watch example">
+  <img src="docs/img/bot.png" width="600" alt="Repo Watch example">
 </p>
 
 To use:
@@ -201,6 +201,7 @@ agentic-dev-sandbox/
 ├── .env.example                  Template
 ├── container/                    Files copied into each agent workspace
 │   ├── CLAUDE.md                 Default agent instructions
+│   ├── barrier-check.sh          Passive security posture checker
 │   ├── repo-watch.sh             Agentic loop: polls issues, invokes Claude Code
 │   └── repo-watch-prompt.md      Prompt template for repo-watch
 ├── agent/
@@ -217,6 +218,7 @@ agentic-dev-sandbox/
 │       ├── apply-rules.sh        Per-network iptables rules (idempotent)
 │       └── remove-rules.sh       Cleanup rules for a subnet
 └── docs/
+    ├── BARRIER-CHECK.md          Barrier check documentation and design rationale
     ├── GUIDE.md                  Profiles, reviewer, VS Code, FAQ, repo-watch details
     └── SECURITY.md               Security model, network isolation, threat table
 ```
