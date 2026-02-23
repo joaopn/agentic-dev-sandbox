@@ -112,6 +112,7 @@ See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and cus
 > Optional:
 > - `GITHUB_PAT` — A read-only GitHub Personal Access Token (PAT), **only if mirroring private repos**. Only Gitea sees it.
 > - `REVIEWER_API_KEY` — an LLM API key needed if the optional `bot-security` is enabled (supports Anthropic, OpenAI, OpenRouter, or local). Only the reviewer service sees it.
+> - [Sysbox](https://github.com/nestybox/sysbox#installation) — only if using `--docker` for Docker-in-Docker support.
 
 To generate the GitHub PAT:
   1. Go to https://github.com/settings/personal-access-tokens/new
@@ -186,6 +187,7 @@ Create/recreate options:
   --gpus <device>                GPU passthrough (e.g., "all"); requires NVIDIA Container Toolkit
   --ssh-port <port>              Host port for SSH (default: auto-assigned)
   --claude-yolo                  Install Claude Code, auto-configure bypass permissions
+  --docker                       Enable Docker-in-Docker via Sysbox runtime
 ```
 
 </details>
@@ -228,11 +230,11 @@ agentic-dev-sandbox/
 ---
 
 ## ◾ Roadmap
-- Docker-in-Docker support
 - Script support for other agentic platforms besides Claude Code (Codex, Aider)
+- Podman repo support
+- Podman container support
 
 ## ◾ Further Reading
-
 - **[docs/GUIDE.md](docs/GUIDE.md)** — Image profiles, reviewer configuration, VS Code Remote-SSH, networking details, `container/` directory, git remotes, repo-watch internals, FAQ.
 - **[docs/SECURITY.md](docs/SECURITY.md)** — Threat model, network isolation, static analysis design, what's prevented and what isn't.
 

@@ -224,6 +224,15 @@ def container_running(name: str) -> bool:
     return r.stdout.strip() == "true"
 
 
+def sysbox_available() -> bool:
+    """Check if sysbox-runc is registered as a Docker runtime."""
+    r = subprocess.run(
+        ["docker", "info", "--format", "{{json .Runtimes}}"],
+        capture_output=True, text=True,
+    )
+    return "sysbox-runc" in r.stdout
+
+
 def docker_compose(*args: str) -> None:
     run_check([
         "docker", "compose",
@@ -231,6 +240,24 @@ def docker_compose(*args: str) -> None:
         "--env-file", str(SCRIPT_DIR / ".env"),
         *args,
     ])
+
+
+def start_byobu_session(container_name: str) -> None:
+    """Start (or restart) the byobu session inside the agent container.
+
+    Called after all post-start configuration (Docker install, Claude Code, etc.)
+    so the shell inherits the final environment (supplementary groups, PATH, etc.).
+
+    Uses 'su - agent' so that PAM resolves supplementary groups from the
+    container's current /etc/group (docker exec alone does not pick up groups
+    added via usermod after container creation).
+    """
+    run(["docker", "exec", container_name, "bash", "-c",
+         "byobu kill-session -t main 2>/dev/null || true"],
+        capture_output=True)
+    run_check(["docker", "exec", "-d", "-u", "0", container_name,
+               "su", "-", "agent", "-c",
+               "byobu new-session -d -s main -c /home/agent -- bash"])
 
 
 def install_claude_code(container_name: str) -> None:
@@ -251,6 +278,44 @@ def install_claude_code(container_name: str) -> None:
     print("Claude Code installed.")
 
 
+def install_docker_dind(container_name: str) -> None:
+    """Install Docker CE inside a Sysbox agent container and start dockerd."""
+    r = subprocess.run(
+        ["docker", "exec", container_name, "bash", "-c", "command -v dockerd"],
+        capture_output=True,
+    )
+    if r.returncode == 0:
+        print("Docker already installed, skipping.")
+        return
+    print("Installing Docker-in-Docker (this may take a minute)...")
+    run_check([
+        "docker", "exec", container_name, "bash", "-c",
+        "curl -fsSL https://get.docker.com | sudo sh",
+    ])
+    # Use crun instead of runc as the inner OCI runtime.  runc's procfs mount
+    # validation (CVE-2025-52881) false-positives on sysbox-fs FUSE-emulated
+    # /proc/sys.  crun implements the same OCI spec (namespaces, cgroups, seccomp,
+    # capabilities) without this issue.  https://github.com/nestybox/sysbox/issues/973
+    run_check([
+        "docker", "exec", container_name, "bash", "-c",
+        "sudo apt-get install -y crun"
+        " && sudo mkdir -p /etc/docker"
+        ' && echo \'{"default-runtime":"crun","runtimes":{"crun":{"path":"/usr/bin/crun"}}}\''
+        " | sudo tee /etc/docker/daemon.json >/dev/null",
+    ])
+    run_check([
+        "docker", "exec", container_name, "bash", "-c",
+        "sudo usermod -aG docker agent",
+    ])
+    # Start dockerd (entrypoint already ran, so we start it manually on first install)
+    run_check([
+        "docker", "exec", container_name, "bash", "-c",
+        "sudo dockerd > /tmp/dockerd.log 2>&1 & "
+        "for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done",
+    ])
+    print("Docker-in-Docker installed and running.")
+
+
 def build_agent_docker_args(
     *,
     container_name: str,
@@ -269,6 +334,7 @@ def build_agent_docker_args(
     cpus: str = "",
     gpus: str = "",
     claude_yolo: bool = False,
+    docker: bool = False,
 ) -> list[str]:
     """Build the docker run argument list. Shared by create and recreate."""
     dns_args = []
@@ -288,15 +354,24 @@ def build_agent_docker_args(
         "-e", f"REPO_NAME={project}",
         "-e", f"SSH_PASSWORD={ssh_pass}",
         "-e", f"HOST_GID={os.getgid()}",
-        # Runtime hardening
-        "--cap-drop=ALL",
-        "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE", "--cap-add=FOWNER",
-        "--cap-add=SETGID", "--cap-add=SETUID", "--cap-add=KILL",
-        "--cap-add=FSETID", "--cap-add=AUDIT_WRITE", "--cap-add=NET_RAW",
-        "--pids-limit=512",
         "--label", f"sandbox.project={project}",
         "--label", f"sandbox.egress={open_egress}",
     ]
+    if docker:
+        # Sysbox isolates via user namespaces — skip capability dropping.
+        # Capabilities inside are real but scoped to a namespace with no host effect.
+        args += ["--runtime=sysbox-runc"]
+        args += ["-e", "DOCKER_DIND=true"]
+        args += ["--pids-limit=2048"]
+    else:
+        # Standard hardening: drop all caps, re-add only what's needed
+        args += [
+            "--cap-drop=ALL",
+            "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE", "--cap-add=FOWNER",
+            "--cap-add=SETGID", "--cap-add=SETUID", "--cap-add=KILL",
+            "--cap-add=FSETID", "--cap-add=AUDIT_WRITE", "--cap-add=NET_RAW",
+            "--pids-limit=512",
+        ]
     if branch:
         args += ["-e", f"REPO_BRANCH={branch}"]
     if memory:
@@ -696,6 +771,8 @@ Projects dir:  {cfg.projects_dir}
 
 def cmd_create(args: argparse.Namespace) -> None:
     cfg = load_config()
+    if args.docker and not sysbox_available():
+        die("--docker requires Sysbox runtime. See: https://github.com/nestybox/sysbox#installation")
     project = parse_project_name(args.github_url)
     container_name = f"sandbox-agent-{project}"
     gitea_user = f"agent-{project}"
@@ -839,6 +916,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
         gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
+        docker=args.docker,
     )
     run_check(["docker", *docker_args])
 
@@ -850,9 +928,17 @@ def cmd_create(args: argparse.Namespace) -> None:
     if args.claude_yolo:
         install_claude_code(container_name)
 
+    # 12. Install Docker-in-Docker if --docker (needs network, so after route injection)
+    if args.docker:
+        install_docker_dind(container_name)
+
+    # 13. Start byobu session (after all installs so shell inherits final environment)
+    start_byobu_session(container_name)
+
     egress_label = "open (all ports)" if open_egress else "locked (80/443/DNS only)"
+    docker_label = " (Docker-in-Docker)" if args.docker else ""
     print(f"""
-=== Sandbox ready: {project} ===
+=== Sandbox ready: {project} ==={docker_label}
 Attach:    sandbox attach {project}
 SSH:       ssh agent@localhost -p {ssh_port}  (password: {ssh_pass})
 Gitea:     http://localhost:{cfg.gitea_port}/{gitea_user}/{project}
@@ -931,12 +1017,14 @@ def cmd_start(args: argparse.Namespace) -> None:
             print(f"start {name}...")
             run(["docker", "start", name])
             _reinject_route(name, cfg)
+            start_byobu_session(name)
     else:
         container = f"sandbox-agent-{args.target}"
         if not container_exists(container):
             die(f"Container {container} not found.")
         run(["docker", "start", container])
         _reinject_route(container, cfg)
+        start_byobu_session(container)
 
 
 def _reinject_route(container: str, cfg: Config) -> None:
@@ -1000,6 +1088,8 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
 def cmd_recreate(args: argparse.Namespace) -> None:
     cfg = load_config()
+    if args.docker and not sysbox_available():
+        die("--docker requires Sysbox runtime. See: https://github.com/nestybox/sysbox#installation")
     project = args.project
     container_name = f"sandbox-agent-{project}"
     gitea_user = f"agent-{project}"
@@ -1109,6 +1199,7 @@ def cmd_recreate(args: argparse.Namespace) -> None:
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
         gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
+        docker=args.docker,
     )
 
     print("Starting new container...")
@@ -1121,6 +1212,13 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     # Install Claude Code if --claude-yolo (needs network, so after route injection)
     if args.claude_yolo:
         install_claude_code(container_name)
+
+    # Install Docker-in-Docker if --docker (needs network, so after route injection)
+    if args.docker:
+        install_docker_dind(container_name)
+
+    # Start byobu session (after all installs so shell inherits final environment)
+    start_byobu_session(container_name)
 
     print(f"""
 === Recreated: {project} ===
@@ -1504,6 +1602,8 @@ def build_parser() -> argparse.ArgumentParser:
     container_flags.add_argument("--profile", default="")
     container_flags.add_argument("--ssh-port", type=int, default=0)
     container_flags.add_argument("--claude-yolo", action="store_true")
+    container_flags.add_argument("--docker", action="store_true",
+                                 help="Enable Docker-in-Docker via Sysbox runtime")
 
     sub.add_parser("setup", help="One-time infrastructure setup").set_defaults(func=cmd_setup)
     sub.add_parser("unsetup", help="Tear down all infrastructure, containers, and volumes").set_defaults(func=cmd_unsetup)

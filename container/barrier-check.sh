@@ -149,7 +149,7 @@ if [ -n "$cap_hex" ]; then
     for cap_name in "${!DANGEROUS_CAPS[@]}"; do
         bit=${DANGEROUS_CAPS[$cap_name]}
         if (( cap_dec & (1 << bit) )); then
-            fail "No $cap_name" "PRESENT (bit $bit)"
+            fail "No $cap_name" "PRESENT (bit $bit) (expected if container runs Docker-in-Docker)"
             log "FAIL: $cap_name is present"
         else
             pass "No $cap_name" ""
@@ -214,14 +214,14 @@ hdr "FILESYSTEM"
 
 # Docker socket
 if [ -e /var/run/docker.sock ]; then
-    fail "No Docker socket" "FOUND at /var/run/docker.sock"
+    fail "No Docker socket" "FOUND at /var/run/docker.sock (expected if container runs Docker-in-Docker)"
 else
     pass "No Docker socket" ""
 fi
 
 # Containerd socket
 if [ -e /run/containerd/containerd.sock ]; then
-    fail "No containerd socket" "FOUND"
+    fail "No containerd socket" "FOUND (expected if container runs Docker-in-Docker)"
 else
     pass "No containerd socket" ""
 fi

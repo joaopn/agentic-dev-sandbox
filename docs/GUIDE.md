@@ -3,6 +3,7 @@
 [◾ After a Reboot](#-after-a-reboot)
 [◾ Recreate vs Destroy](#-recreate-vs-destroy)
 [◾ Image Profiles](#-image-profiles)
+[◾ Docker-in-Docker](#-docker-in-docker)
 [◾ `container/` Directory](#-container-directory)
 [◾ Git Remotes Inside the Container](#-git-remotes-inside-the-container)
 [◾ VS Code Remote-SSH](#-vs-code-remote-ssh)
@@ -86,6 +87,32 @@ To add a custom profile, create `agent/Dockerfile.myprofile`. Copy an existing D
 | `nano` | Lightweight editor for quick in-container edits |
 | `iputils-ping` | Useful for debugging network isolation |
 | `btop` | Useful for a global view of the container activity |
+
+## ◾ Docker-in-Docker
+
+The `--docker` flag gives the agent a full Docker environment inside its container, so it can build images, run `docker compose`, and orchestrate containers. This uses [Sysbox](https://github.com/nestybox/sysbox), a container runtime that enables Docker-in-Docker without `--privileged` or socket mounting.
+
+```bash
+python sandbox.py create https://github.com/you/myproject --profile python --docker
+```
+
+**Requirement:** Sysbox must be installed on the host. The CLI will error if it's missing. See [Sysbox installation](https://github.com/nestybox/sysbox#installation).
+
+`--docker` is orthogonal to `--profile` — any profile can use it. Docker is installed at container creation time (not baked into the image), so existing profiles work without modification. On `stop`/`start`, the Docker daemon restarts automatically.
+
+**What changes with `--docker`:**
+- Container runs with `--runtime=sysbox-runc` instead of the default runtime
+- PID limit is raised from 512 to 2048 (inner containers need headroom)
+- Docker CE is installed inside the container at creation time (~30-60s)
+- [crun](https://github.com/containers/crun) is used as the inner OCI runtime instead of runc (see below)
+- The `agent` user is added to the `docker` group for rootless access
+- `barrier-check.sh` will flag the Docker socket and extra capabilities — these are expected in DinD mode (see [Security: Docker-in-Docker](SECURITY.md#-docker-in-docker-security))
+
+**What stays the same:** Network isolation, Gitea setup, router egress filtering, review service — all unchanged.
+
+#### Why crun instead of runc
+
+The inner Docker daemon uses [crun](https://github.com/containers/crun) as its OCI runtime. runc >= 1.3.3 added procfs mount validation ([CVE-2025-52881](https://github.com/opencontainers/runc/security/advisories/GHSA-jfvp-7x6p-h2pv)) that false-positives on Sysbox's FUSE-emulated `/proc/sys`, preventing any inner container from starting. crun implements the same OCI spec (namespaces, cgroups, seccomp, capabilities) without this validation issue. Since Sysbox is the outer security boundary, the inner OCI runtime choice has no effect on host isolation. See [sysbox#973](https://github.com/nestybox/sysbox/issues/973) for upstream tracking.
 
 ## ◾ `container/` Directory
 

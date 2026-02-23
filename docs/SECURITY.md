@@ -4,6 +4,7 @@
 [◾ Network Isolation](#-network-isolation)
 [◾ Static Analysis](#-static-analysis)
 [◾ Barrier Testing](#-barrier-testing)
+[◾ Docker-in-Docker Security](#-docker-in-docker-security)
 [◾ Security FAQ](#-security-faq)
 
 ---
@@ -112,6 +113,32 @@ The static analysis scans Dockerfiles as text (config mode) — it does **not** 
 
 `barrier-check.sh` is a passive security posture checker that validates every barrier in the threat model above. Run it on the host (some checks fail) and in the sandbox (all pass) — the delta is the proof. See [BARRIER-CHECK.md](BARRIER-CHECK.md) for full documentation, including why active exploitation testing and agentic testing are excluded.
 
+> [!NOTE]
+> When `--docker` is enabled, several barrier-check tests will report `[FAIL]` — this is expected. Sysbox grants the container capabilities (SYS_ADMIN, NET_ADMIN, etc.) and creates Docker/containerd sockets that the standard sandbox does not have. These capabilities are scoped to a Sysbox user namespace and have no effect on the host. The Docker socket is the inner daemon, not the host's. See the comparison table below for the full list of expected differences.
+
+## ◾ Docker-in-Docker Security
+
+With `--docker`, the container runs under [Sysbox](https://github.com/nestybox/sysbox) instead of the default OCI runtime. Sysbox uses **user namespace isolation**: the container's root is an unprivileged user on the host, and all capabilities (SYS_ADMIN, NET_ADMIN, etc.) are real inside the namespace but have no host effect. This is what enables Docker-in-Docker without `--privileged`.
+
+| Aspect | Standard (`--docker` off) | Docker-in-Docker (`--docker` on) |
+|---|---|---|
+| **OCI runtime** | Default (runc) | Sysbox (`sysbox-runc`) |
+| **Capabilities** | Dropped to minimum (CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL, FSETID, AUDIT_WRITE, NET_RAW) | All capabilities present — scoped to Sysbox user namespace |
+| **Seccomp** | Docker default profile (mode 2) | Sysbox manages isolation via user namespaces; seccomp may show disabled |
+| **User namespace creation** | Blocked (`unshare --user` fails) | Allowed (Sysbox itself uses user namespaces) |
+| **Docker socket** | Absent | Present (`/var/run/docker.sock` — inner daemon, not host) |
+| **Containerd socket** | Absent | Present (`/run/containerd/containerd.sock` — inner daemon) |
+| **Docker group** | Agent not in docker group | Agent in docker group (inner Docker access) |
+| **PID limit** | 512 | 2048 (inner containers need headroom) |
+| **Inner OCI runtime** | N/A | crun (avoids runc/Sysbox procfs incompatibility) |
+| **Network isolation** | Internal network + NAT router | Unchanged |
+| **Egress filtering** | Router iptables (80/443/DNS/ICMP) | Unchanged |
+| **LAN/RFC1918 blocking** | Router drops RFC1918 | Unchanged |
+| **Gitea access** | Per-project user + token | Unchanged |
+| **Host filesystem** | Docker volume, no bind mount | Unchanged |
+| **Review service** | Separate container, separate API key | Unchanged |
+
+**Why capabilities inside Sysbox are safe:** Sysbox maps the container's UID 0 to an unprivileged host UID via user namespaces. A process with SYS_ADMIN inside the container can mount filesystems *within* the namespace but cannot affect the host. Similarly, NET_ADMIN allows network configuration inside the container's network namespace but cannot modify host routing or reach other containers. This is the same isolation model used by rootless Docker and Podman.
 
 ## ◾ Security FAQ
 

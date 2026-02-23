@@ -42,6 +42,11 @@ fi
 
 sudo /usr/sbin/sshd
 
+# --- Docker-in-Docker (start dockerd if installed, e.g. Sysbox runtime) ---
+if command -v dockerd &>/dev/null; then
+    sudo dockerd > /tmp/dockerd.log 2>&1 &
+fi
+
 # --- Git configuration ---
 git config --global user.name "sandbox-agent"
 git config --global user.email "agent@sandbox.local"
@@ -109,13 +114,8 @@ if [[ -n "${REPO_BRANCH:-}" ]]; then
     git checkout "${REPO_BRANCH}" 2>/dev/null || git checkout -b "${REPO_BRANCH}"
 fi
 
-# --- Start byobu session ---
-echo "Starting byobu session 'main'..."
-byobu new-session -d -s main -c /home/agent "exec bash"
-
 echo "=== Agent container ready ==="
 echo "Repo: ${REPO_DIR}"
-echo "Byobu session: main"
 
 # Keep the container running
 exec tail -f /dev/null
