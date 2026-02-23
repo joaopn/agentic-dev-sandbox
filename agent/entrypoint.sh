@@ -44,7 +44,7 @@ sudo /usr/sbin/sshd
 
 # --- Docker-in-Docker (start dockerd if installed, e.g. Sysbox runtime) ---
 if command -v dockerd &>/dev/null; then
-    sudo dockerd > /tmp/dockerd.log 2>&1 &
+    sudo sh -c 'dockerd > /tmp/dockerd.log 2>&1 &'
 fi
 
 # --- Git configuration ---
