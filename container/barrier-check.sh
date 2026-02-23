@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# pentest.sh — Passive security posture checker for agentic-dev-sandbox.
+# barrier-check.sh — Passive security posture checker for agentic-dev-sandbox.
 # Safe to run anywhere (host, container, VM). All checks are read-only.
 #
 # Container-specific checks (Deepce, LinPEAS, Gitea, PID limits) run
 # automatically when a container is detected (/.dockerenv).
 #
 # Usage:
-#   bash pentest.sh                  # run all checks (auto-detects container)
-#   bash pentest.sh --no-color       # disable colored output
-#   bash pentest.sh --help           # show usage
+#   bash barrier-check.sh                  # run all checks (auto-detects container)
+#   bash barrier-check.sh --no-color       # disable colored output
+#   bash barrier-check.sh --help           # show usage
 
 set -uo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
-VERSION="1.0.0"
+VERSION="0.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_DIR="$SCRIPT_DIR/pentest-results"
+RESULTS_DIR="$SCRIPT_DIR/barrier-check-results"
 TOOLS_DIR="$RESULTS_DIR/.tools"
 
-LINPEAS_URL="https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh"
+# Pinned versions of external tools (for container checks)
+LINPEAS_URL="https://github.com/peass-ng/PEASS-ng/releases/download/20260212-43b28429/linpeas.sh"
 LINPEAS_SHA256="e001347d8238c1d8e8ff9ec601fea0074ecedc4260c4859d0aa57e919429135f"
 
-DEEPCE_URL="https://raw.githubusercontent.com/stealthcopter/deepce/main/deepce.sh"
+DEEPCE_URL="https://raw.githubusercontent.com/stealthcopter/deepce/420b1d1ddb636f6bd277a105f580cd09b03517cc/deepce.sh"
 DEEPCE_SHA256="2c8301c3e8d12c01f6ad39e9513f5a7011ccaaee7eee1f40951a38b756d3bf98"
 
 # Capabilities bitmask positions
@@ -68,7 +69,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --no-color)   USE_COLOR=false ;;
         --help|-h)
-            echo "Usage: bash pentest.sh [--no-color] [--help]"
+            echo "Usage: bash barrier-check.sh [--no-color] [--help]"
             echo ""
             echo "Passive security posture checker. Safe to run anywhere."
             echo "Container-specific checks (Deepce, LinPEAS, Gitea, PID limits)"
@@ -120,7 +121,7 @@ echo "════════════════════════�
 printf '%s\n' "$RESET"
 
 # ── Logging ──────────────────────────────────────────────────────────────────
-LOG="$RESULTS_DIR/pentest.log"
+LOG="$RESULTS_DIR/barrier-check.log"
 : > "$LOG"
 
 log() { echo "[$(date -u '+%H:%M:%S')] $*" >> "$LOG"; }
@@ -572,14 +573,14 @@ if download_tool "linpeas.sh" "$LINPEAS_URL" "$LINPEAS_SHA256"; then
     # ── SUID/SGID binaries ──
     # Direct filesystem check — deterministic, no text parsing needed.
     suid_bins=$(find / -perm /6000 -type f 2>/dev/null \
-        | grep -vE '(linpeas|pentest|\.tools)' | sort || true)
+        | grep -vE '(linpeas|barrier-check|\.tools)' | sort || true)
     suid_count=0
     if [ -n "$suid_bins" ]; then
         suid_count=$(echo "$suid_bins" | wc -l)
     fi
     if [ "$suid_count" -gt 0 ]; then
         echo "$suid_bins" > "$RESULTS_DIR/suid-sgid.txt"
-        info "SUID/SGID binaries" "$suid_count found (see pentest-results/suid-sgid.txt)"
+        info "SUID/SGID binaries" "$suid_count found (see barrier-check-results/suid-sgid.txt)"
     else
         pass "SUID/SGID binaries" "none found"
     fi
