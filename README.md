@@ -26,8 +26,8 @@ python sandbox.py create https://github.com/you/myproject --profile python --cla
 ## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
 python sandbox.py attach myproject
 
-# 4. Fetch committed code
-python fetch-sandbox.py <myproject local repo> <remote branch name>
+# 4. Fetch agent committed code
+python fetch-sandbox.py <myproject local repo> <agent branch name>
 ```
 
 ---
