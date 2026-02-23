@@ -678,6 +678,11 @@ def prompt_env_settings() -> None:
     print()
 
 
+def resolve_target(args: argparse.Namespace) -> str:
+    """Return '--all' or the project name from the mutually exclusive group."""
+    return "--all" if args.all else args.project
+
+
 def for_containers(action: str, target: str) -> None:
     """Run a docker action on one project or --all."""
     if target == "--all":
@@ -1003,12 +1008,13 @@ def cmd_ssh(args: argparse.Namespace) -> None:
 
 
 def cmd_stop(args: argparse.Namespace) -> None:
-    for_containers("stop", args.target)
+    for_containers("stop", resolve_target(args))
 
 
 def cmd_start(args: argparse.Namespace) -> None:
     cfg = load_config()
-    if args.target == "--all":
+    target = resolve_target(args)
+    if target == "--all":
         containers = get_agent_containers()
         if not containers:
             print("No sandbox agent containers found.")
@@ -1019,7 +1025,7 @@ def cmd_start(args: argparse.Namespace) -> None:
             _reinject_route(name, cfg)
             start_byobu_session(name)
     else:
-        container = f"sandbox-agent-{args.target}"
+        container = f"sandbox-agent-{target}"
         if not container_exists(container):
             die(f"Container {container} not found.")
         run(["docker", "start", container])
@@ -1062,11 +1068,11 @@ def _reinject_route(container: str, cfg: Config) -> None:
 
 
 def cmd_pause(args: argparse.Namespace) -> None:
-    for_containers("pause", args.target)
+    for_containers("pause", resolve_target(args))
 
 
 def cmd_unpause(args: argparse.Namespace) -> None:
-    for_containers("unpause", args.target)
+    for_containers("unpause", resolve_target(args))
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
@@ -1622,7 +1628,9 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in [("stop", "Stop"), ("start", "Start"),
                             ("pause", "Freeze"), ("unpause", "Resume")]:
         p = sub.add_parser(name, help=f"{help_text} agent container(s)")
-        p.add_argument("target", metavar="project|--all")
+        g = p.add_mutually_exclusive_group(required=True)
+        g.add_argument("project", nargs="?", help="project name")
+        g.add_argument("--all", action="store_true", help="all containers")
         p.set_defaults(func={"stop": cmd_stop, "start": cmd_start,
                               "pause": cmd_pause, "unpause": cmd_unpause}[name])
 
