@@ -133,32 +133,31 @@ log() { echo "[$(date -u '+%H:%M:%S')] $*" >> "$LOG"; }
 # ── 1a. Capabilities & Isolation ─────────────────────────────────────────────
 hdr "CAPABILITIES & ISOLATION"
 
-# Decode capability bitmasks
-cap_hex=""
+# Decode capability bitmask (bounding set — what the process could acquire)
 cap_bnd_hex=""
 if [ -r /proc/self/status ]; then
-    cap_hex=$(grep -i '^CapEff:' /proc/self/status 2>/dev/null | awk '{print $2}')
     cap_bnd_hex=$(grep -i '^CapBnd:' /proc/self/status 2>/dev/null | awk '{print $2}')
 fi
 
-if [ -n "$cap_hex" ]; then
-    cap_dec=$((16#$cap_hex))
-    log "CapEff hex=$cap_hex dec=$cap_dec"
+if [ -n "$cap_bnd_hex" ]; then
+    cap_bnd_dec=$((16#$cap_bnd_hex))
+    log "CapBnd hex=$cap_bnd_hex dec=$cap_bnd_dec"
 
-    # Check each dangerous capability
+    # Check each dangerous capability against the bounding set.
+    # CapEff is empty for non-root users; CapBnd shows what could be acquired.
     for cap_name in "${!DANGEROUS_CAPS[@]}"; do
         bit=${DANGEROUS_CAPS[$cap_name]}
-        if (( cap_dec & (1 << bit) )); then
-            fail "No $cap_name" "PRESENT (bit $bit) (expected if container runs Docker-in-Docker)"
-            log "FAIL: $cap_name is present"
+        if (( cap_bnd_dec & (1 << bit) )); then
+            fail "No $cap_name" "PRESENT in CapBnd (bit $bit) (expected if container runs Docker-in-Docker)"
+            log "FAIL: $cap_name is present in CapBnd"
         else
             pass "No $cap_name" ""
-            log "PASS: $cap_name absent"
+            log "PASS: $cap_name absent from CapBnd"
         fi
     done
 else
     skip "Capability check" "Cannot read /proc/self/status"
-    log "SKIP: Cannot read CapEff"
+    log "SKIP: Cannot read CapBnd"
 fi
 
 # Seccomp

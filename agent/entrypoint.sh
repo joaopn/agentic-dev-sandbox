@@ -58,6 +58,20 @@ echo "${GITEA_URL//:\/\//:\/\/${GITEA_USER}:${GITEA_TOKEN}@}" > ~/.git-credentia
 chmod 600 ~/.git-credentials
 git config --global credential.helper 'store --file ~/.git-credentials'
 
+# --- Persist sandbox env vars for login shells (su - agent, byobu, SSH) ---
+# Docker env vars are only inherited by child processes of PID 1.  Login shells
+# (su -, ssh) start clean and lose them.  /etc/profile.d/ is sourced by
+# /etc/profile on every Linux distro for all login shells.
+sudo mkdir -p /etc/profile.d
+sudo tee /etc/profile.d/sandbox-env.sh > /dev/null << SANDBOX_ENV
+export GITEA_URL="${GITEA_URL}"
+export GITEA_TOKEN="${GITEA_TOKEN}"
+export GITEA_USER="${GITEA_USER}"
+export REPO_NAME="${REPO_NAME}"
+export REPO_BRANCH="${REPO_BRANCH:-}"
+export SSH_PASSWORD="${SSH_PASSWORD}"
+SANDBOX_ENV
+
 # --- Ensure umask 002 in interactive shells (for host bind-mount access) ---
 if ! grep -q 'umask 002' ~/.bashrc 2>/dev/null; then
     echo 'umask 002' >> ~/.bashrc
