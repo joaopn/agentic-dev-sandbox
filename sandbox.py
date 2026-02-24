@@ -720,6 +720,13 @@ def cmd_setup(args: argparse.Namespace) -> None:
     else:
         print("Projects directory: (standard Docker volumes)")
 
+    # Generate Gitea SECRET_KEY if not already set
+    if not os.environ.get("GITEA_SECRET_KEY"):
+        secret_key = secrets.token_hex(32)
+        update_env_key("GITEA_SECRET_KEY", secret_key)
+        os.environ["GITEA_SECRET_KEY"] = secret_key
+        print("Generated Gitea SECRET_KEY.")
+
     # Start infrastructure (reviewer managed separately via 'sandbox review setup/on/off')
     print("Starting infrastructure (Gitea, router)...")
     docker_compose("up", "-d", "--build", "gitea", "router")
@@ -845,7 +852,8 @@ def cmd_create(args: argparse.Namespace) -> None:
     }
     gitea_api_ok(cfg, "PATCH", f"/repos/{gitea_user}/{project}",
                  {"description": "Agent workspace", **repo_features})
-    gitea_api_ok(cfg, "PATCH", f"/repos/sandbox-admin/{project}", repo_features)
+    gitea_api_ok(cfg, "PATCH", f"/repos/sandbox-admin/{project}",
+                 {**repo_features, "has_issues": False})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-admin",
                  {"permission": "admin"})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/subscription")
@@ -1404,7 +1412,7 @@ def cmd_unsetup(args: argparse.Namespace) -> None:
 
     # 4. Remove generated tokens from .env
     env_file = SCRIPT_DIR / ".env"
-    cleanup_prefixes = ("GITEA_ADMIN_TOKEN=", "GITEA_ADMIN_PASSWORD=", "BOT_SECURITY_TOKEN=")
+    cleanup_prefixes = ("GITEA_ADMIN_TOKEN=", "GITEA_ADMIN_PASSWORD=", "GITEA_SECRET_KEY=", "BOT_SECURITY_TOKEN=")
     if env_file.exists():
         lines = env_file.read_text().splitlines()
         new_lines = [l for l in lines

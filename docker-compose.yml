@@ -1,6 +1,6 @@
 services:
   gitea:
-    image: gitea/gitea:latest
+    image: gitea/gitea:1.25
     container_name: sandbox-gitea
     environment:
       - GITEA__server__ROOT_URL=http://localhost:${GITEA_PORT:-3000}
@@ -8,6 +8,7 @@ services:
       - GITEA__server__PUBLIC_URL_DETECTION=auto
       - GITEA__server__LANDING_PAGE=explore
       - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__security__SECRET_KEY=${GITEA_SECRET_KEY}
       - GITEA__security__INSTALL_LOCK=true
       - GITEA__service__DISABLE_REGISTRATION=true
       - GITEA__service__REQUIRE_SIGNIN_VIEW=false

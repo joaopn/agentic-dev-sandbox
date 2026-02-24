@@ -28,9 +28,9 @@
 ### Not prevented
 
 - Agent reading all code in its project (necessary for it to work)
-- HTTPS exfiltration to public endpoints (inherent to internet access)
+- HTTPS exfiltration to public endpoints of whatever the agent has access to (inherent to internet access)
 - LLM review missing a subtle backdoor (it's a filter, not a guarantee)
-- Container escape via unpatched kernel/runc CVE (same risk as any container)
+- Container escape via unpatched kernel/runc CVE (same risk as any container, though see [BARRIER-CHECK.md](BARRIER-CHECK.md))
 
 ## ◾ Network Isolation
 
@@ -67,7 +67,7 @@ This means:
 - **LAN is unreachable** — the router's iptables FORWARD chain drops all traffic
   to RFC1918 destinations (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, link-local).
 - **Egress port filtering** (default): Only HTTP (80), HTTPS (443), DNS (53), and
-  ICMP are allowed. Use `--open-egress` to allow all destination ports.
+  ICMP are allowed. Use `--open-egress` to allow all destination ports for e.g. MCP servers.
 - **Native networking** — `ping`, `apt`, `pip`, `curl`, and any tool that expects
   normal internet access work out of the box. No proxy configuration needed.
 - **Infrastructure access** — Gitea, router, and review service are connected to
