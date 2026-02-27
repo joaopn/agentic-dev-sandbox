@@ -13,7 +13,9 @@ services:
       - GITEA__service__DISABLE_REGISTRATION=true
       - GITEA__service__REQUIRE_SIGNIN_VIEW=false
       - GITEA__mirror__ENABLED=true
-      - GITEA__mirror__DEFAULT_INTERVAL=${MIRROR_INTERVAL:-8h}
+      - GITEA__mirror__MIN_INTERVAL=${MIRROR_INTERVAL:-1m}
+      - GITEA__mirror__DEFAULT_INTERVAL=${MIRROR_INTERVAL:-1m}
+      - GITEA__cron__update_mirrors__SCHEDULE=@every ${MIRROR_INTERVAL:-1m}
       - GITEA__webhook__ALLOWED_HOST_LIST=sandbox-review
       - GITEA__repository__DEFAULT_BRANCH=main
       # Disable features we don't need
