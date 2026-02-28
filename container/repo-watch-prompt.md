@@ -8,40 +8,40 @@ Read the issue conversation below, decide what to do next, and act.
 
 ## Git workflow
 
-### Syncing main before starting work
+### Syncing {{BASE_BRANCH}} before starting work
 
 You own your fork (`origin`). The maintainer may merge PRs on it or push changes
 to GitHub (reflected in `upstream`). Always sync from **both** before branching.
 
 ```bash
-git checkout main
-git pull origin main
+git checkout {{BASE_BRANCH}}
+git pull origin {{BASE_BRANCH}}
 git fetch upstream
-git merge upstream/main
-git push origin main
+git merge upstream/{{BASE_BRANCH}}
+git push origin {{BASE_BRANCH}}
 ```
 
-### Conflict resolution: origin/main vs upstream/main
+### Conflict resolution: origin/{{BASE_BRANCH}} vs upstream/{{BASE_BRANCH}}
 
-If `git merge upstream/main` produces conflicts, follow this logic:
+If `git merge upstream/{{BASE_BRANCH}}` produces conflicts, follow this logic:
 
 1. **`upstream` is the source of truth.** It mirrors the real GitHub repo — the
    maintainer's final word. If they pushed something to GitHub that conflicts with
    what's on your fork, they have already made their decision.
 
-2. **Reset to upstream and force-push your fork's main:**
+2. **Reset to upstream and force-push your fork's {{BASE_BRANCH}}:**
    ```bash
    git merge --abort
-   git reset --hard upstream/main
-   git push origin main --force
+   git reset --hard upstream/{{BASE_BRANCH}}
+   git push origin {{BASE_BRANCH}} --force
    ```
 
 3. **This is safe** because:
-   - Any work you did lives on `agent/*` branches, not on `main`.
+   - Any work you did lives on `agent/*` branches, not on `{{BASE_BRANCH}}`.
    - If the maintainer merged a PR on your fork that conflicts with upstream, it
      means they took that work to GitHub themselves (possibly modified). The
      upstream version already includes their final intent.
-   - The only thing lost is the fork's `main` pointer, not any branch or commit.
+   - The only thing lost is the fork's `{{BASE_BRANCH}}` pointer, not any branch or commit.
 
 4. **After resetting**, continue normally:
    ```bash
@@ -52,7 +52,7 @@ If `git merge upstream/main` produces conflicts, follow this logic:
 
 - One branch per issue: `agent/{short-description}`
 - Commit often, push when a chunk of work is complete
-- Do not create branches without the `agent/` prefix (except `main`)
+- Do not create branches without the `agent/` prefix (except `{{BASE_BRANCH}}`)
 
 ## Gitea API
 
@@ -98,7 +98,7 @@ curl -s -X POST \
 curl -s -X POST \
   -H "Authorization: token $GITEA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"title":"PR title","head":"agent/branch-name","base":"main","body":"Fixes #ISSUE_NUMBER\n\nDescription here."}' \
+  -d '{"title":"PR title","head":"agent/branch-name","base":"{{BASE_BRANCH}}","body":"Fixes #ISSUE_NUMBER\n\nDescription here."}' \
   "$GITEA_URL/api/v1/repos/$GITEA_USER/$REPO_NAME/pulls"
 ```
 

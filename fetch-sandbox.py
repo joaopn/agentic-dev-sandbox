@@ -306,7 +306,7 @@ def review_diff(repo_path: str, ref: str, base_branch: str) -> bool:
 # ─── Safety checks ────────────────────────────────────────────────────────────
 
 
-def run_safety_checks(repo_path: str, ref: str) -> str:
+def run_safety_checks(repo_path: str, ref: str, base_override: str = "") -> str:
     """Check for symlinks and auto-execute file modifications. Returns base_branch."""
     print("\n── Pre-Merge Safety Checks ──")
 
@@ -325,9 +325,13 @@ def run_safety_checks(repo_path: str, ref: str) -> str:
     else:
         print("  Symlinks: none")
 
-    # Auto-execute files
-    r = git(repo_path, "symbolic-ref", "refs/remotes/origin/HEAD", check=False)
-    base_branch = r.stdout.strip().replace("refs/remotes/origin/", "") if r.returncode == 0 else "main"
+    # Determine base branch: explicit override > origin/HEAD > "main" fallback
+    if base_override:
+        base_branch = base_override
+    else:
+        r = git(repo_path, "symbolic-ref", "refs/remotes/origin/HEAD", check=False)
+        base_branch = r.stdout.strip().replace("refs/remotes/origin/", "") if r.returncode == 0 else "main"
+    print(f"  Base branch: {base_branch}")
 
     r = git(repo_path, "diff", "--quiet", f"{base_branch}...{ref}", "--", *AUTO_EXEC_PATHS, check=False)
     if r.returncode != 0:
@@ -458,20 +462,33 @@ def main() -> None:
         return
 
     skip_review = "--skip-review" in sys.argv
-    argv = [a for a in sys.argv if a != "--skip-review"]
+    base_override = ""
+    argv = []
+    i = 1
+    while i < len(sys.argv):
+        if sys.argv[i] == "--skip-review":
+            i += 1
+            continue
+        if sys.argv[i] == "--base" and i + 1 < len(sys.argv):
+            base_override = sys.argv[i + 1]
+            i += 2
+            continue
+        argv.append(sys.argv[i])
+        i += 1
 
-    if len(argv) < 3:
-        print("Usage: python fetch-sandbox.py <repo_path> <branch> [--skip-review]")
+    if len(argv) < 2:
+        print("Usage: python fetch-sandbox.py <repo_path> <branch> [--base <branch>] [--skip-review]")
         print("       python fetch-sandbox.py setup")
         print()
         print("  repo_path      Path to your local git repository")
         print("  branch         Branch name on the staging remote (e.g. agent/feature-branch, main)")
+        print("  --base         Override base branch for diff computation (default: auto-detect)")
         print("  --skip-review  Skip the LLM security review step")
         print("  setup          Configure LLM provider for security reviews")
         sys.exit(1)
 
-    repo_path = os.path.abspath(argv[1])
-    branch = argv[2]
+    repo_path = os.path.abspath(argv[0])
+    branch = argv[1]
 
     project = os.path.basename(repo_path)
     gitea_user = f"agent-{project}"
@@ -524,7 +541,7 @@ def main() -> None:
         sys.exit(1)
 
     # ── Step 2: Safety checks (git-based, needs fetched refs) ──
-    base_branch = run_safety_checks(repo_path, ref)
+    base_branch = run_safety_checks(repo_path, ref, base_override)
 
     # ── Step 3: LLM security review ──
     if not skip_review:

@@ -153,18 +153,19 @@ Commands:
   pause <project|--all>          Freeze container(s) in place (cgroup)
   unpause <project|--all>        Resume frozen container(s)
   sync <project>                 Trigger Gitea mirror sync from GitHub
+  set-branch <project> <branch>  Switch agent's base branch without recreating
   recreate <project> [opts]      New container + fresh volume + fresh token
   status                         List all projects, containers, ports
   destroy <project>              Remove container, volume, Gitea user + repos
   logs <project>                 Tail container logs
 
 Standalone script (run from your real repo):
-  python fetch-sandbox.py setup                                  Configure LLM provider for security reviews
-  python fetch-sandbox.py <repo_path> <branch> [--skip-review]   LLM security review, safety checks, staging remote setup + merge
+  python fetch-sandbox.py setup                                              Configure LLM provider for security reviews
+  python fetch-sandbox.py <repo_path> <branch> [--base <b>] [--skip-review]  Fetch, review, and merge agent work
 
 Create/recreate options:
   --profile <name>               Agent image profile (required)
-  --branch <name>                Branch to check out
+  --branch <name>                Base branch for agent work (default: repo default)
   --open-egress                  Allow all outbound ports (default: 80/443/DNS)
   --memory <limit>               Container memory limit (default: unlimited)
   --cpus <limit>                 Container CPU limit

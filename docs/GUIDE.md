@@ -157,8 +157,11 @@ Displaying the password is not a security issue, as anyone with docker permissio
 
 ```bash
 python fetch-sandbox.py /path/to/your/repo agent/feature-branch
+python fetch-sandbox.py /path/to/your/repo agent/feature-branch --base dev
 python fetch-sandbox.py /path/to/your/repo agent/feature-branch --skip-review
 ```
+
+Use `--base <branch>` to specify which branch the diff is computed against (for safety checks and security review). By default, the script auto-detects the base from `refs/remotes/origin/HEAD`, falling back to `main`.
 
 The script performs these steps in order:
 

@@ -342,6 +342,7 @@ done
 mkdir -p "$FAIL_DIR" "$LOG_DIR"
 
 log "repo-watch: monitoring ${REPO_PATH} (poll every ${POLL_INTERVAL}s)"
+log "repo-watch: branch → $(git -C "$REPO_DIR" branch --show-current 2>/dev/null || echo 'detached')"
 log "repo-watch: logs → ${LOG_DIR}"
 [[ -n "$REPO_WATCH_MAX_TURNS" ]] && log "repo-watch: max turns: ${REPO_WATCH_MAX_TURNS}"
 [[ -n "$REPO_WATCH_MAX_BUDGET_USD" ]] && log "repo-watch: max budget: \$${REPO_WATCH_MAX_BUDGET_USD}"

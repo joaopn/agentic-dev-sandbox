@@ -6,7 +6,8 @@
 #   GITEA_TOKEN      — Per-project Gitea API token
 #   GITEA_USER       — Per-project Gitea user (e.g., agent-myproject)
 #   REPO_NAME        — Repository name
-#   REPO_BRANCH      — Branch to check out (optional, defaults to repo default)
+#   BASE_BRANCH      — Base branch for agent work (optional, defaults to repo default)
+#   REPO_BRANCH      — Deprecated alias for BASE_BRANCH
 #   SSH_PASSWORD     — Password for SSH access
 #   HOST_GID         — Host user's GID, for bind-mount access (optional)
 #   CLAUDE_YOLO      — Install Claude Code + bypass permissions (optional)
@@ -68,7 +69,7 @@ export GITEA_URL="${GITEA_URL}"
 export GITEA_TOKEN="${GITEA_TOKEN}"
 export GITEA_USER="${GITEA_USER}"
 export REPO_NAME="${REPO_NAME}"
-export REPO_BRANCH="${REPO_BRANCH:-}"
+export BASE_BRANCH="${BASE_BRANCH:-${REPO_BRANCH:-}}"
 export SSH_PASSWORD="${SSH_PASSWORD}"
 SANDBOX_ENV
 
@@ -123,13 +124,37 @@ cd "${REPO_DIR}"
 # Add upstream remote pointing to the mirror repo (read-only, for syncing with GitHub)
 git remote add upstream "${GITEA_URL}/sandbox-admin/${REPO_NAME}.git" 2>/dev/null || true
 
+# Resolve base branch: BASE_BRANCH takes priority, REPO_BRANCH is a deprecated alias
+EFFECTIVE_BRANCH="${BASE_BRANCH:-${REPO_BRANCH:-}}"
+
 # Checkout specified branch if set
-if [[ -n "${REPO_BRANCH:-}" ]]; then
-    git checkout "${REPO_BRANCH}" 2>/dev/null || git checkout -b "${REPO_BRANCH}"
+if [[ -n "${EFFECTIVE_BRANCH}" ]]; then
+    git checkout "${EFFECTIVE_BRANCH}" 2>/dev/null || git checkout -b "${EFFECTIVE_BRANCH}"
 fi
+
+# --- Render template files (replace {{BASE_BRANCH}} placeholders) ---
+# Templates are the original files copied from container/; save them for re-rendering.
+for tmpl_file in ~/CLAUDE.md ~/repo-watch-prompt.md; do
+    if [[ -f "${tmpl_file}" ]] && grep -q '{{BASE_BRANCH}}' "${tmpl_file}" 2>/dev/null; then
+        # Save template as hidden dotfile (e.g. .CLAUDE.md.template) for re-rendering
+        tmpl_dir=$(dirname "${tmpl_file}")
+        tmpl_base=$(basename "${tmpl_file}")
+        cp "${tmpl_file}" "${tmpl_dir}/.${tmpl_base}.template"
+        if [[ -n "${EFFECTIVE_BRANCH}" ]]; then
+            sed -i "s/{{BASE_BRANCH}}/${EFFECTIVE_BRANCH}/g" "${tmpl_file}"
+        else
+            # No branch specified — default to repo's current branch
+            default_branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+            sed -i "s/{{BASE_BRANCH}}/${default_branch}/g" "${tmpl_file}"
+        fi
+    fi
+done
 
 echo "=== Agent container ready ==="
 echo "Repo: ${REPO_DIR}"
+if [[ -n "${EFFECTIVE_BRANCH}" ]]; then
+    echo "Base branch: ${EFFECTIVE_BRANCH}"
+fi
 
 # Keep the container running
 exec tail -f /dev/null

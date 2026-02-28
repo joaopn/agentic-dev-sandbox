@@ -12,26 +12,26 @@ Do not add other remotes.
 
 ## Git Workflow
 
-### Syncing main
+### Syncing {{BASE_BRANCH}}
 
-You must sync `main` from **both** remotes before starting new work. The maintainer
+You must sync `{{BASE_BRANCH}}` from **both** remotes before starting new work. The maintainer
 may have merged PRs on your fork (`origin`) or pushed changes to GitHub (`upstream`).
 
 ```bash
-git checkout main
-git pull origin main              # Get PRs the maintainer merged on your fork
+git checkout {{BASE_BRANCH}}
+git pull origin {{BASE_BRANCH}}              # Get PRs the maintainer merged on your fork
 git fetch upstream
-git merge upstream/main           # Get changes from the real GitHub repo
-git push origin main              # Keep your fork's main up to date
+git merge upstream/{{BASE_BRANCH}}           # Get changes from the real GitHub repo
+git push origin {{BASE_BRANCH}}              # Keep your fork up to date
 ```
 
-If `upstream/main` conflicts with `origin/main`: **upstream wins** — it is the real
+If `upstream/{{BASE_BRANCH}}` conflicts with `origin/{{BASE_BRANCH}}`: **upstream wins** — it is the real
 repo. See the conflict resolution section in `~/repo-watch-prompt.md` for details.
 
 ### Branches
 
 - **Use `agent/` prefix** for feature branches: `agent/add-auth`, `agent/fix-parser`.
-- **Do not create branches without the `agent/` prefix** (except `main`).
+- **Do not create branches without the `agent/` prefix** (except `{{BASE_BRANCH}}`).
 - **Commit often locally.** Small commits with clear messages.
 - **Push when you finish a logical chunk of work.** Not after every commit. Push when:
   - You've completed the task or a meaningful milestone
@@ -42,10 +42,10 @@ repo. See the conflict resolution section in `~/repo-watch-prompt.md` for detail
 
 ```bash
 # Correct workflow
-git checkout main
-git pull origin main
-git fetch upstream && git merge upstream/main
-git push origin main
+git checkout {{BASE_BRANCH}}
+git pull origin {{BASE_BRANCH}}
+git fetch upstream && git merge upstream/{{BASE_BRANCH}}
+git push origin {{BASE_BRANCH}}
 git checkout -b agent/my-feature
 # ... work, committing as you go ...
 git add -A && git commit -m "Add JWT validation middleware"

@@ -371,7 +371,8 @@ def build_agent_docker_args(
             "--pids-limit=512",
         ]
     if branch:
-        args += ["-e", f"REPO_BRANCH={branch}"]
+        args += ["-e", f"BASE_BRANCH={branch}"]
+        args += ["-e", f"REPO_BRANCH={branch}"]  # deprecated alias
     if memory:
         args += [f"--memory={memory}"]
     if cpus:
@@ -761,6 +762,15 @@ def cmd_create(args: argparse.Namespace) -> None:
                  {"permission": "admin"})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/subscription")
 
+    # Determine base branch: --branch flag → Gitea mirror's default_branch
+    base_branch = args.branch
+    if not base_branch:
+        repo_info = gitea_api_or(cfg, "GET", f"/repos/sandbox-admin/{project}", {})
+        if isinstance(repo_info, dict):
+            base_branch = repo_info.get("default_branch", "")
+        if base_branch:
+            print(f"Base branch: {base_branch} (from repo default)")
+
     # 3. Generate fresh Gitea token
     print(f"Generating Gitea token for {gitea_user}...")
     agent_token = generate_gitea_token(cfg, gitea_user, user_pass)
@@ -824,7 +834,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         volume_name=volume_name, ssh_port=ssh_port, agent_token=agent_token,
         gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
-        branch=args.branch or "", cpus=args.cpus or "",
+        branch=base_branch or "", cpus=args.cpus or "",
         gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
         docker=args.docker,
     )
@@ -847,13 +857,14 @@ def cmd_create(args: argparse.Namespace) -> None:
 
     egress_label = "open (all ports)" if open_egress else "locked (80/443/DNS only)"
     docker_label = " (Docker-in-Docker)" if args.docker else ""
+    branch_label = f"\nBase branch: {base_branch}" if base_branch else ""
     print(f"""
 === Sandbox ready: {project} ==={docker_label}
 Attach:    sandbox attach {project}
 SSH:       ssh agent@localhost -p {ssh_port}  (password: {ssh_pass})
 Gitea:     http://localhost:{cfg.gitea_port}/{gitea_user}/{project}
 Gitea login: sandbox-admin / {cfg.gitea_admin_password}
-Egress:    {egress_label}
+Egress:    {egress_label}{branch_label}
 
 To review agent work from your real repo:
   git remote add staging http://localhost:{cfg.gitea_port}/{gitea_user}/{project}.git
@@ -992,6 +1003,61 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
     print("Sync complete.")
 
+
+def cmd_set_branch(args: argparse.Namespace) -> None:
+    """Switch the base branch for an agent sandbox without recreating it."""
+    project = args.project
+    branch = args.branch
+    container_name = f"sandbox-agent-{project}"
+
+    if not container_running(container_name):
+        die(f"Container {container_name} is not running. Run: sandbox start {project}")
+
+    home = f"/home/agent"
+    repo_dir = f"{home}/{project}"
+
+    # 1. Verify branch exists in upstream
+    print(f"Verifying branch '{branch}' exists in upstream...")
+    r = run(["docker", "exec", container_name, "bash", "-c",
+             f"cd {repo_dir} && git fetch upstream && git rev-parse upstream/{branch}"],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"Branch '{branch}' not found in upstream mirror. "
+            f"Push it to GitHub first, then run: sandbox sync {project}")
+
+    # 2. Re-render templates from saved .template files
+    print(f"Updating agent instructions to use '{branch}' as base branch...")
+    for filename in ["CLAUDE.md", "repo-watch-prompt.md"]:
+        template = f"{home}/.{filename}.template"
+        target = f"{home}/{filename}"
+        render_cmd = (
+            f"if [ -f '{template}' ]; then "
+            f"cp '{template}' '{target}' && "
+            f"sed -i 's/{{{{BASE_BRANCH}}}}/{branch}/g' '{target}'; "
+            f"fi"
+        )
+        run(["docker", "exec", container_name, "bash", "-c", render_cmd],
+            capture_output=True)
+
+    # 3. Update env var in /etc/profile.d/sandbox-env.sh
+    env_cmd = (
+        f"sudo sed -i 's/^export BASE_BRANCH=.*/export BASE_BRANCH=\"{branch}\"/' "
+        f"/etc/profile.d/sandbox-env.sh"
+    )
+    run(["docker", "exec", container_name, "bash", "-c", env_cmd], capture_output=True)
+
+    # 4. Checkout the branch if agent is currently on the old base (not a feature branch)
+    r = run(["docker", "exec", container_name, "bash", "-c",
+             f"cd {repo_dir} && git symbolic-ref --short HEAD"],
+            capture_output=True, text=True)
+    current_branch = r.stdout.strip() if r.returncode == 0 else ""
+    if current_branch and not current_branch.startswith("agent/"):
+        print(f"Checking out '{branch}'...")
+        run(["docker", "exec", container_name, "bash", "-c",
+             f"cd {repo_dir} && git checkout {branch}"],
+            capture_output=True)
+
+    print(f"Base branch updated to '{branch}'. Next agent invocation will use it.")
 
 
 
@@ -1363,6 +1429,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("sync", help="Trigger Gitea mirror sync")
     p.add_argument("project")
     p.set_defaults(func=cmd_sync)
+
+    p = sub.add_parser("set-branch", help="Switch agent's base branch without recreating")
+    p.add_argument("project")
+    p.add_argument("branch", help="Branch name to use as the new base")
+    p.set_defaults(func=cmd_set_branch)
 
     p = sub.add_parser("recreate", help="New container + fresh token, keeps volume",
                        parents=[container_flags])
