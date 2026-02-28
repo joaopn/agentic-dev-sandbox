@@ -163,7 +163,22 @@ check_retries() {
     return 0
 }
 
+# Format asset list into readable markdown links.
+# Skips agent log attachments (agent_log_*) to avoid noise.
+# Args: $1=assets_json (jq array)
+# Prints: markdown list of attachments, or empty string if none
+format_assets() {
+    local assets_json="$1"
+    echo "$assets_json" | jq -r '
+        [.[] | select(.name | startswith("agent_log_") | not)]
+        | if length > 0 then
+            "\n**Attachments:**\n" +
+            (map("- [\(.name)](/attachments/\(.uuid))") | join("\n"))
+          else "" end'
+}
+
 # Format issue/PR comments into readable text.
+# Includes user-uploaded attachments so the LLM can see what was shared.
 format_comments() {
     local comments_json="$1"
     local num_comments
@@ -171,12 +186,19 @@ format_comments() {
     local formatted=""
 
     for j in $(seq 0 $((num_comments - 1))); do
-        local c_author c_body c_date
+        local c_author c_body c_date c_assets
         c_author=$(echo "$comments_json" | jq -r ".[$j].user.login")
         c_body=$(echo "$comments_json" | jq -r ".[$j].body")
         c_date=$(echo "$comments_json" | jq -r ".[$j].created_at")
+        local assets_text=""
+        # Only include attachments from non-agent comments
+        if [[ "$c_author" != "$GITEA_USER" ]]; then
+            local c_assets
+            c_assets=$(echo "$comments_json" | jq ".[$j].assets // []")
+            assets_text=$(format_assets "$c_assets")
+        fi
         formatted+="**${c_author}** (${c_date}):
-${c_body}
+${c_body}${assets_text}
 
 ---
 "
@@ -367,6 +389,11 @@ while true; do
         author=$(echo "$items" | jq -r ".[$i].user.login")
         labels=$(echo "$items" | jq -r "[.[$i].labels[].name] | join(\", \")")
         is_pr=$(echo "$items" | jq -r ".[$i].pull_request // empty")
+
+        # Include issue-level attachments in the body
+        issue_assets=$(echo "$items" | jq ".[$i].assets // []")
+        body_assets=$(format_assets "$issue_assets")
+        [[ -n "$body_assets" ]] && body+="$body_assets"
 
         local_type="Issue"
         [[ -n "$is_pr" ]] && local_type="PR"
