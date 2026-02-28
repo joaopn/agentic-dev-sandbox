@@ -210,12 +210,21 @@ parse_log() {
                     done <<< "$thinking" >> "$parsed_file"
                     echo "" >> "$parsed_file"
                 fi
-                # Tool name indicators
-                tools=$(echo "$line" | jq -r '.message.content[]? | select(.type == "tool_use") | .name' 2>/dev/null) || true
-                if [[ -n "$tools" ]]; then
-                    while IFS= read -r tool_name; do
-                        echo "  [tool] ${tool_name}" >> "$parsed_file"
-                    done <<< "$tools"
+                # Tool calls as fenced code blocks (readable in terminal + markdown)
+                tool_lines=$(echo "$line" | jq -r '
+                    .message.content[]? | select(.type == "tool_use") |
+                    (.name | ascii_downcase) as $type |
+                    (if .name == "Bash" then (.input.command // "(no command)") | gsub("\n"; "\n  ")
+                     elif (.name == "Write" or .name == "Edit" or .name == "Read") then .input.file_path // "(no path)"
+                     elif .name == "WebFetch" then .input.url // "(no url)"
+                     elif .name == "WebSearch" then .input.query // "(no query)"
+                     elif .name == "Grep" then .input.pattern // "(no pattern)"
+                     else null end) as $detail |
+                    if $detail then "\n  ```" + $type + "\n  " + $detail + "\n  ```\n"
+                    else "\n  ```" + $type + "\n  ```\n" end
+                ' 2>/dev/null) || true
+                if [[ -n "$tool_lines" ]]; then
+                    echo "$tool_lines" >> "$parsed_file"
                 fi
                 # Text responses
                 text=$(echo "$line" | jq -r '.message.content[]? | select(.type == "text") | .text' 2>/dev/null) || true
