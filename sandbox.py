@@ -26,7 +26,6 @@ class Config:
 
     def __init__(self):
         self.github_pat = ""
-        self.reviewer_api_key = ""
         self.gitea_admin_token = ""
         self.gitea_admin_password = ""
         self.projects_dir = ""
@@ -53,7 +52,6 @@ def load_config() -> Config:
             os.environ[key.strip()] = value.strip()
 
     cfg.github_pat = os.environ.get("GITHUB_PAT", "")
-    cfg.reviewer_api_key = os.environ.get("REVIEWER_API_KEY", "")
     cfg.gitea_admin_token = os.environ.get("GITEA_ADMIN_TOKEN", "")
     cfg.gitea_admin_password = os.environ.get("GITEA_ADMIN_PASSWORD", "")
     cfg.gitea_port = os.environ.get("GITEA_PORT", "3000")
@@ -484,9 +482,6 @@ def ensure_agent_network(project: str, cfg: Config, open_egress: bool = False) -
     # Connect infrastructure services (ignore errors if already connected)
     for svc in ["sandbox-gitea", "sandbox-router"]:
         run(["docker", "network", "connect", network, svc], capture_output=True)
-    if container_running("sandbox-review"):
-        run(["docker", "network", "connect", network, "sandbox-review"], capture_output=True)
-
     router_ip = get_router_ip(network)
     apply_firewall_rules(network, open_egress)
     return network, router_ip
@@ -496,101 +491,9 @@ def remove_agent_network(project: str) -> None:
     """Remove firewall rules, disconnect infrastructure, and remove per-project network."""
     network = f"sandbox-net-{project}"
     remove_firewall_rules(network)
-    for svc in ["sandbox-gitea", "sandbox-router", "sandbox-review"]:
+    for svc in ["sandbox-gitea", "sandbox-router"]:
         run(["docker", "network", "disconnect", network, svc], capture_output=True)
     run(["docker", "network", "rm", network], capture_output=True)
-
-
-def add_reviewer_webhook(cfg: Config, gitea_user: str, project: str) -> bool:
-    """Add the review service webhook to an agent's repo. Returns True if added."""
-    hooks = gitea_api_or(cfg, "GET", f"/repos/{gitea_user}/{project}/hooks", [])
-    has_hook = any(
-        "sandbox-review" in (h.get("config", {}).get("url", ""))
-        for h in (hooks if isinstance(hooks, list) else [])
-    )
-    if has_hook:
-        return False
-    ok = gitea_api_ok(cfg, "POST", f"/repos/{gitea_user}/{project}/hooks", {
-        "type": "gitea",
-        "active": True,
-        "events": ["issue_comment", "pull_request_comment"],
-        "config": {
-            "url": "http://sandbox-review:8080/webhook",
-            "content_type": "json",
-        },
-    })
-    if not ok:
-        print(f"  Warning: failed to add webhook for {gitea_user}/{project}")
-    return ok
-
-
-def remove_reviewer_webhook(cfg: Config, gitea_user: str, project: str) -> bool:
-    """Remove the review service webhook from an agent's repo. Returns True if removed."""
-    hooks = gitea_api_or(cfg, "GET", f"/repos/{gitea_user}/{project}/hooks", [])
-    if not isinstance(hooks, list):
-        return False
-    removed = False
-    for h in hooks:
-        if "sandbox-review" in (h.get("config", {}).get("url", "")):
-            hook_id = h.get("id")
-            if hook_id:
-                gitea_api_ok(cfg, "DELETE", f"/repos/{gitea_user}/{project}/hooks/{hook_id}")
-                removed = True
-    return removed
-
-
-def ensure_bot_user(cfg: Config, bot_name: str) -> str:
-    """Create a Gitea bot user (bot-{name}) if it doesn't exist and return a fresh API token."""
-    username = f"bot-{bot_name}"
-    password = gen_password()
-
-    if not gitea_api_ok(cfg, "GET", f"/users/{username}"):
-        gitea_api(cfg, "POST", "/admin/users", {
-            "username": username,
-            "password": password,
-            "email": f"{username}@sandbox.local",
-            "must_change_password": False,
-            "visibility": "public",
-        })
-    else:
-        gitea_api(cfg, "PATCH", f"/admin/users/{username}", {
-            "login_name": username,
-            "source_id": 0,
-            "password": password,
-            "must_change_password": False,
-        })
-
-    return generate_gitea_token(cfg, username, password)
-
-
-def add_bot_collaborator(cfg: Config, bot_name: str, gitea_user: str, project: str) -> None:
-    """Add a bot user as collaborator to an agent's repo (idempotent)."""
-    username = f"bot-{bot_name}"
-    gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/{username}",
-                 {"permission": "read"})
-
-
-def remove_bot_collaborator(cfg: Config, bot_name: str, gitea_user: str, project: str) -> None:
-    """Remove a bot user as collaborator from an agent's repo."""
-    username = f"bot-{bot_name}"
-    gitea_api_ok(cfg, "DELETE", f"/repos/{gitea_user}/{project}/collaborators/{username}")
-
-
-def delete_bot_user(cfg: Config, bot_name: str) -> None:
-    """Delete a bot user from Gitea."""
-    username = f"bot-{bot_name}"
-    gitea_api_ok(cfg, "DELETE", f"/admin/users/{username}")
-
-
-def docker_compose_review(*args: str) -> None:
-    """Run docker compose with the review profile enabled."""
-    run_check([
-        "docker", "compose",
-        "-f", str(SCRIPT_DIR / "docker-compose.yml"),
-        "--env-file", str(SCRIPT_DIR / ".env"),
-        "--profile", "review",
-        *args,
-    ])
 
 
 def update_env_key(key: str, value: str) -> None:
@@ -727,7 +630,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
         os.environ["GITEA_SECRET_KEY"] = secret_key
         print("Generated Gitea SECRET_KEY.")
 
-    # Start infrastructure (reviewer managed separately via 'sandbox review setup/on/off')
+    # Start infrastructure (reviewer managed separately via 'fetch-sandbox.py setup')
     print("Starting infrastructure (Gitea, router)...")
     docker_compose("up", "-d", "--build", "gitea", "router")
 
@@ -862,13 +765,7 @@ def cmd_create(args: argparse.Namespace) -> None:
     print(f"Generating Gitea token for {gitea_user}...")
     agent_token = generate_gitea_token(cfg, gitea_user, user_pass)
 
-    # 4. Create webhook + bot access (if reviewer is running)
-    if container_running("sandbox-review"):
-        print("Configuring review webhook...")
-        add_reviewer_webhook(cfg, gitea_user, project)
-        add_bot_collaborator(cfg, "security", gitea_user, project)
-
-    # 5. Build agent image if needed
+    # 4. Build agent image if needed
     profile = args.profile or cfg.default_profile
     if not profile:
         available = sorted(
@@ -960,7 +857,7 @@ Egress:    {egress_label}
 
 To review agent work from your real repo:
   git remote add staging http://localhost:{cfg.gitea_port}/{gitea_user}/{project}.git
-  sandbox review {project} <branch-name>""")
+  python fetch-sandbox.py <repo-path> <branch-name>""")
 
 
 def cmd_attach(args: argparse.Namespace) -> None:
@@ -1056,8 +953,6 @@ def _reinject_route(container: str, cfg: Config) -> None:
     # Reconnect infra services (covers Gitea/router restart via compose)
     for svc in ["sandbox-gitea", "sandbox-router"]:
         run(["docker", "network", "connect", network, svc], capture_output=True)
-    if container_running("sandbox-review"):
-        run(["docker", "network", "connect", network, "sandbox-review"], capture_output=True)
 
     try:
         router_ip = get_router_ip(network)
@@ -1197,11 +1092,6 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     open_egress = args.open_egress or cfg.default_open_egress
     agent_network, router_ip = ensure_agent_network(project, cfg, open_egress)
 
-    # Ensure webhook + bot access if reviewer is running
-    if container_running("sandbox-review"):
-        add_reviewer_webhook(cfg, gitea_user, project)
-        add_bot_collaborator(cfg, "security", gitea_user, project)
-
     ssh_port = args.ssh_port or find_free_port(2222)
     ssh_pass = gen_password()
     memory = args.memory or cfg.default_memory
@@ -1245,7 +1135,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     print("=== Sandbox Status ===\n")
 
     print("── Infrastructure ──")
-    for svc in ["sandbox-gitea", "sandbox-review", "sandbox-router"]:
+    for svc in ["sandbox-gitea", "sandbox-router"]:
         r = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", svc],
                            capture_output=True, text=True)
         state = r.stdout.strip() if r.returncode == 0 else "not found"
@@ -1361,7 +1251,7 @@ def cmd_unsetup(args: argparse.Namespace) -> None:
     else:
         print("  - (no agent containers found)")
     print("  - Gitea server and all mirrored/forked repos")
-    print("  - Router and review service")
+    print("  - Router")
     print("  - All associated Docker volumes\n")
 
     confirm = input("Type 'yes' to confirm: ").strip()
@@ -1400,19 +1290,13 @@ def cmd_unsetup(args: argparse.Namespace) -> None:
     else:
         print("No agent containers found.")
 
-    # 2. Delete bot users (before Gitea goes down)
-    try:
-        delete_bot_user(cfg, "security")
-    except Exception:
-        pass
-
-    # 3. Stop and remove infrastructure containers + volumes
+    # 2. Stop and remove infrastructure containers + volumes
     print("\n── Removing infrastructure ──")
     docker_compose("down", "-v")
 
     # 4. Remove generated tokens from .env
     env_file = SCRIPT_DIR / ".env"
-    cleanup_prefixes = ("GITEA_ADMIN_TOKEN=", "GITEA_ADMIN_PASSWORD=", "GITEA_SECRET_KEY=", "BOT_SECURITY_TOKEN=")
+    cleanup_prefixes = ("GITEA_ADMIN_TOKEN=", "GITEA_ADMIN_PASSWORD=", "GITEA_SECRET_KEY=")
     if env_file.exists():
         lines = env_file.read_text().splitlines()
         new_lines = [l for l in lines
@@ -1431,172 +1315,6 @@ Run 'sandbox setup' to start fresh.""")
 def cmd_logs(args: argparse.Namespace) -> None:
     container = f"sandbox-agent-{args.project}"
     os.execvp("docker", ["docker", "logs", "-f", container])
-
-
-# ─── Reviewer Commands ───────────────────────────────────────────────────────
-
-
-def cmd_review_setup(args: argparse.Namespace) -> None:
-    """Interactive reviewer configuration + start."""
-    cfg = load_config()
-
-    print("=== Reviewer Setup ===\n")
-
-    # Provider
-    providers = ["anthropic", "openai", "openrouter", "local"]
-    print(f"LLM provider ({', '.join(providers)}): ", end="", flush=True)
-    provider = input().strip()
-    if provider not in providers:
-        die(f"Invalid provider '{provider}'. Must be one of: {', '.join(providers)}")
-
-    # API key (skip for local)
-    api_key = ""
-    if provider != "local":
-        current_key = os.environ.get("REVIEWER_API_KEY", "")
-        masked = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else current_key
-        print(f"API key [{masked or 'not set'}]: ", end="", flush=True)
-        choice = input().strip()
-        api_key = choice if choice else current_key
-        if not api_key:
-            die("API key is required for non-local providers.")
-
-    # Model
-    print("Model: ", end="", flush=True)
-    model = input().strip()
-    if not model:
-        die("Model name is required.")
-
-    # Endpoint (required for local, optional for others)
-    endpoint = ""
-    if provider == "local":
-        current_ep = os.environ.get("REVIEWER_ENDPOINT", "")
-        print(f"Endpoint [{current_ep or 'not set'}]: ", end="", flush=True)
-        choice = input().strip()
-        endpoint = choice if choice else current_ep
-        if not endpoint:
-            die("Endpoint is required for local provider.")
-
-    # Health check — verify credentials before saving
-    print("\nVerifying credentials...", end=" ", flush=True)
-    provider_endpoints = {
-        "anthropic": "https://api.anthropic.com",
-        "openai": "https://api.openai.com",
-        "openrouter": "https://openrouter.ai/api",
-    }
-    check_ep = (endpoint or provider_endpoints.get(provider, "")).rstrip("/")
-    if provider == "anthropic":
-        check_url = f"{check_ep}/v1/messages"
-        check_headers = {
-            "x-api-key": api_key, "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-    else:
-        check_url = f"{check_ep}/v1/chat/completions"
-        check_headers: dict[str, str] = {"content-type": "application/json"}
-        if api_key:
-            check_headers["authorization"] = f"Bearer {api_key}"
-    check_body = json.dumps({
-        "model": model, "max_tokens": 1,
-        "messages": [{"role": "user", "content": "Say OK"}],
-    }).encode()
-    try:
-        req = Request(check_url, data=check_body, method="POST", headers=check_headers)
-        with urlopen(req, timeout=30) as resp:
-            resp.read()
-        print("OK")
-    except HTTPError as e:
-        body = e.read().decode(errors="replace")[:300]
-        die(f"health check failed — POST {check_url} returned HTTP {e.code}: {body}")
-    except URLError as e:
-        die(f"health check failed — POST {check_url}: {e.reason}")
-
-    # Write to .env
-    print("Saving configuration...")
-    update_env_key("REVIEWER_PROVIDER", provider)
-    update_env_key("REVIEWER_API_KEY", api_key)
-    update_env_key("REVIEWER_MODEL", model)
-    if endpoint:
-        update_env_key("REVIEWER_ENDPOINT", endpoint)
-
-    # Create bot-security Gitea user
-    print("Creating bot-security user...", end=" ", flush=True)
-    bot_token = ensure_bot_user(cfg, "security")
-    update_env_key("BOT_SECURITY_TOKEN", bot_token)
-    print("OK")
-
-    # Build and start review container
-    print("Building and starting review service...")
-    docker_compose_review("up", "-d", "--build", "review")
-
-    # Connect to existing projects, add webhooks, and grant bot access
-    cfg = load_config()  # reload to pick up new env values
-    containers = get_agent_containers()
-    projects = [n.removeprefix("sandbox-agent-") for n in containers]
-
-    for project in projects:
-        network = f"sandbox-net-{project}"
-        gitea_user = f"agent-{project}"
-        run(["docker", "network", "connect", network, "sandbox-review"], capture_output=True)
-        add_reviewer_webhook(cfg, gitea_user, project)
-        add_bot_collaborator(cfg, "security", gitea_user, project)
-
-    count = len(projects)
-    print(f"""
-=== Reviewer Ready ===
-Provider:  {provider}
-Model:     {model}
-Bot user:  bot-security
-Projects:  {count} connected""")
-    if count:
-        print("Comment /security on any PR to trigger a review.")
-    else:
-        print("No projects yet. Webhooks will be added when you 'sandbox create'.")
-
-
-def cmd_review_on(args: argparse.Namespace) -> None:
-    """Start the review service and connect to all projects."""
-    cfg = load_config()
-
-    # Check if review image/container has been set up
-    model = os.environ.get("REVIEWER_MODEL", "")
-    if not model:
-        die("Reviewer not configured. Run 'sandbox review setup' first.")
-
-    print("Starting review service...")
-    docker_compose_review("up", "-d", "review")
-
-    containers = get_agent_containers()
-    projects = [n.removeprefix("sandbox-agent-") for n in containers]
-
-    for project in projects:
-        network = f"sandbox-net-{project}"
-        gitea_user = f"agent-{project}"
-        run(["docker", "network", "connect", network, "sandbox-review"], capture_output=True)
-        add_reviewer_webhook(cfg, gitea_user, project)
-        add_bot_collaborator(cfg, "security", gitea_user, project)
-
-    print(f"Reviewer on. Connected to {len(projects)} project(s).")
-
-
-def cmd_review_off(args: argparse.Namespace) -> None:
-    """Stop the review service and disconnect from all projects."""
-    cfg = load_config()
-
-    containers = get_agent_containers()
-    projects = [n.removeprefix("sandbox-agent-") for n in containers]
-
-    for project in projects:
-        network = f"sandbox-net-{project}"
-        gitea_user = f"agent-{project}"
-        remove_reviewer_webhook(cfg, gitea_user, project)
-        remove_bot_collaborator(cfg, "security", gitea_user, project)
-        run(["docker", "network", "disconnect", network, "sandbox-review"], capture_output=True)
-
-    if container_running("sandbox-review"):
-        print("Stopping review service...")
-        docker_compose_review("stop", "review")
-
-    print(f"Reviewer off. Disconnected from {len(projects)} project(s).")
 
 
 # ─── CLI Parser ───────────────────────────────────────────────────────────────
@@ -1645,13 +1363,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("sync", help="Trigger Gitea mirror sync")
     p.add_argument("project")
     p.set_defaults(func=cmd_sync)
-
-    p = sub.add_parser("review", help="Reviewer management")
-    review_sub = p.add_subparsers(dest="review_command", required=True)
-
-    review_sub.add_parser("setup", help="Configure and start the review service").set_defaults(func=cmd_review_setup)
-    review_sub.add_parser("on", help="Start reviewer and connect to all projects").set_defaults(func=cmd_review_on)
-    review_sub.add_parser("off", help="Stop reviewer and disconnect from all projects").set_defaults(func=cmd_review_off)
 
     p = sub.add_parser("recreate", help="New container + fresh token, keeps volume",
                        parents=[container_flags])

@@ -17,7 +17,6 @@
 ```bash
 docker compose up -d           # Gitea, router
 python sandbox.py start --all  # Agent containers
-python sandbox.py review on    # Reviewer (if previously configured)
 ```
 
 To fully tear down everything (all agent containers, volumes, networks, and infrastructure):
@@ -26,7 +25,7 @@ To fully tear down everything (all agent containers, volumes, networks, and infr
 python sandbox.py unsetup
 ```
 
-This removes all agent containers and their workspace volumes, stops and removes Gitea/router/review containers and their Docker volumes, cleans up per-project networks, and removes the generated `GITEA_ADMIN_TOKEN` from `.env`. 
+This removes all agent containers and their workspace volumes, stops and removes Gitea/router containers and their Docker volumes, cleans up per-project networks, and removes the generated `GITEA_ADMIN_TOKEN` from `.env`. 
 Your other `.env` settings are preserved — run `sandbox setup` to start fresh.
 
 ## ◾ Recreate vs Destroy
@@ -108,7 +107,7 @@ python sandbox.py create https://github.com/you/myproject --profile python --doc
 - The `agent` user is added to the `docker` group for rootless access
 - `barrier-check.sh` will flag the Docker socket and extra capabilities — these are expected in DinD mode (see [Security: Docker-in-Docker](SECURITY.md#-docker-in-docker-security))
 
-**What stays the same:** Network isolation, Gitea setup, router egress filtering, review service — all unchanged.
+**What stays the same:** Network isolation, Gitea setup, router egress filtering — all unchanged.
 
 #### Why crun instead of runc
 
@@ -154,47 +153,42 @@ Displaying the password is not a security issue, as anyone with docker permissio
 
 ## ◾ Fetch Sandbox
 
-`fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It adds a `staging` git remote pointing at the local Gitea instance, fetches the requested branch, and runs safety checks before you merge.
+`fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It adds a `staging` git remote pointing at the local Gitea instance, fetches the requested branch, runs safety checks and an optional LLM security review, then merges.
 
 ```bash
 python fetch-sandbox.py /path/to/your/repo agent/feature-branch
+python fetch-sandbox.py /path/to/your/repo agent/feature-branch --skip-review
 ```
 
 The script performs these steps in order:
 
-1. **Security review** — Queries the Gitea API for PRs matching the branch and displays any flagged automated security review comments posted by `bot-security`.
-2. **Staging remote setup** — If the `staging` remote doesn't exist yet, prompts to add it (pointing at `http://localhost:<GITEA_PORT>/<agent-user>/<project>.git`).
-3. **Fetch** — Runs `git fetch staging` to pull all refs from the agent's Gitea fork.
-4. **Safety checks** — Scans the fetched ref for:
+1. **Staging remote setup** — If the `staging` remote doesn't exist yet, prompts to add it (pointing at `http://localhost:<GITEA_PORT>/<agent-user>/<project>.git`).
+2. **Fetch** — Runs `git fetch staging` to pull all refs from the agent's Gitea fork.
+3. **Safety checks** — Scans the fetched ref for:
    - **Symlinks** — lists any symlinks and their targets.
    - **Auto-execute file modifications** — flags changes to files that run automatically (`.envrc`, `Makefile`, `package.json`, pre-commit hooks, `.gitmodules`, etc.).
-5. **Merge instructions** — Prints the `git diff` and `git merge --squash` commands to review and merge.
+4. **LLM security review** — If configured (via `fetch-sandbox.py setup`), computes the git diff and sends it to the configured LLM provider for security analysis. Results are displayed inline. If security issues are found, you're prompted before proceeding.
+5. **Merge** — Applies the changes as unstaged modifications via `git merge --squash` + `git reset HEAD`.
 
 Requires `GITEA_ADMIN_TOKEN` in `.env` (set by `sandbox setup`).
 
 ## ◾ Reviewer
 
-The review service runs as a bot that responds to slash commands in PR comments. Comment `/security` on any PR to trigger an automated security review. It runs in a separate container with its own LLM API key — the agent never interacts with it.
+Security reviews run automatically at fetch time. When `fetch-sandbox.py` fetches a branch, it computes the git diff and sends it to a configured LLM for security analysis. Results are displayed in the terminal. If security issues are found, you're prompted before merging.
 
-Each bot command gets a dedicated Gitea user (`bot-security`, etc.). Duplicate reviews on the same commit are skipped automatically. The bot is extensible — new commands can be added to the `COMMANDS` dict in `review/review-server.py`.
+The API key stays on the host — it never enters any container.
 
-The reviewer is managed independently from the core infrastructure via three commands:
+The reviewer is configured once:
 
 ```bash
-python sandbox.py review setup   # Interactive: configure provider, key, model → starts service
-python sandbox.py review on      # Start service, connect to all projects, add webhooks
-python sandbox.py review off     # Remove webhooks, disconnect, stop service
+python fetch-sandbox.py setup   # Interactive: configure provider, key, model
 ```
 
-`review setup` prompts for provider, API key, and model, creates the `bot-security` Gitea user, writes the config to `.env`, builds the review container, and connects it to all existing projects. After that, `review on` and `review off` toggle it without re-prompting.
+`setup` prompts for provider, API key, and model, verifies credentials with a health check, and writes the config to `.env`. No containers, webhooks, or bot users are involved.
 
-The reviewer is **not started by `sandbox setup`**. After a reboot, bring it back with `sandbox review on`.
-`sandbox unsetup` and `docker compose down` tear it down along with everything else.
-
-To view an existing review for a branch:
-
+To skip the review for a specific fetch:
 ```bash
-python sandbox.py review show <project> <branch>
+python fetch-sandbox.py /path/to/repo branch --skip-review
 ```
 
 ### Supported providers
@@ -206,10 +200,9 @@ python sandbox.py review show <project> <branch>
 | `openrouter` | Yes | `https://openrouter.ai/api`|
 | `local` | No | Must set `REVIEWER_ENDPOINT` |
 
-Default endpoints are in `review/review-config.yaml`. Override with `REVIEWER_ENDPOINT` in `.env`.
+Default endpoints are built into `fetch-sandbox.py`. Override with `REVIEWER_ENDPOINT` in `.env`.
 
-**Customizing the review prompt:** Edit `review/review-config.yaml`. The prompt must contain a `{diff}` placeholder.
-Rebuild the review container after changes: `sandbox review off && sandbox review setup`.
+**Customizing the review prompt:** Edit `review-config.yaml` in the project root. The prompt must contain a `{diff}` placeholder. Changes take effect on the next `fetch-sandbox.py` run — no rebuild needed.
 
 ## ◾ Repo Watch
 

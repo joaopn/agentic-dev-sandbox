@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""fetch-sandbox — Fetch agent branch from sandbox Gitea, show security review and safety checks.
+"""fetch-sandbox — Fetch agent branch from sandbox Gitea, run security review and safety checks.
 
 Usage:
-    python fetch-sandbox.py <repo_path> <branch>
+    python fetch-sandbox.py <repo_path> <branch> [--skip-review]
+    python fetch-sandbox.py setup
 
-    repo_path  Path to your local git repository
-    branch     Branch name on the staging remote (e.g. agent/feature-branch, main)
+    repo_path      Path to your local git repository
+    branch         Branch name on the staging remote (e.g. agent/feature-branch, main)
+    --skip-review  Skip the LLM security review step
+    setup          Configure LLM provider for security reviews (interactive)
 """
 from __future__ import annotations
 
@@ -19,15 +22,22 @@ from urllib.request import Request, urlopen
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-REVIEW_MARKER = "<!-- automated-security-review -->"
-NO_ISSUES_TEXT = "**No security concerns found.**"
-BOT_USER = "bot-security"
-
 AUTO_EXEC_PATHS = [
     ".envrc", ".vscode/", ".husky/", ".pre-commit-config.yaml", ".gitmodules",
     "package.json", "setup.py", "setup.cfg", "Makefile", "CMakeLists.txt",
     ".cargo/config.toml", ".eslintrc.js", ".prettierrc.js",
 ]
+
+NO_ISSUES_TEXT = "**No security concerns found.**"
+
+# Default API endpoints per provider (override with REVIEWER_ENDPOINT in .env).
+PROVIDER_ENDPOINTS = {
+    "anthropic": "https://api.anthropic.com",
+    "openai": "https://api.openai.com",
+    "openrouter": "https://openrouter.ai/api",
+}
+
+DEFAULT_PROMPT = "Review this diff for security issues:\n\n{diff}\n"
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────
@@ -60,6 +70,80 @@ def load_env() -> tuple[str, str]:
     return gitea_port, gitea_admin_token
 
 
+def load_review_config() -> tuple[str, str, str, str] | None:
+    """Load REVIEWER_* settings from .env. Returns (provider, key, model, endpoint) or None."""
+    env_file = SCRIPT_DIR / ".env"
+    if not env_file.exists():
+        return None
+
+    provider = ""
+    api_key = ""
+    model = ""
+    endpoint = ""
+
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if key == "REVIEWER_PROVIDER":
+                provider = value
+            elif key == "REVIEWER_API_KEY":
+                api_key = value
+            elif key == "REVIEWER_MODEL":
+                model = value
+            elif key == "REVIEWER_ENDPOINT":
+                endpoint = value
+
+    if not model:
+        return None
+    return provider or "anthropic", api_key, model, endpoint
+
+
+def load_yaml_config(path: Path) -> dict:
+    """Minimal YAML loader — handles top-level scalars and block scalars (|)."""
+    config: dict = {}
+    if not path.exists():
+        return config
+
+    lines = path.read_text().splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped or stripped.startswith("#"):
+            i += 1
+            continue
+
+        if line[0] != " " and ":" in stripped:
+            key, _, value = stripped.partition(":")
+            key, value = key.strip(), value.strip()
+
+            if value == "|":
+                block_lines: list[str] = []
+                i += 1
+                while i < len(lines):
+                    bline = lines[i]
+                    if bline and not bline[0].isspace():
+                        break
+                    block_lines.append(bline)
+                    i += 1
+                non_empty = [bl for bl in block_lines if bl.strip()]
+                if non_empty:
+                    indent = min(len(bl) - len(bl.lstrip()) for bl in non_empty)
+                    block_lines = [bl[indent:] if len(bl) > indent else "" for bl in block_lines]
+                config[key] = "\n".join(block_lines).rstrip("\n") + "\n"
+                continue
+
+            config[key] = value
+        i += 1
+
+    return config
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -90,69 +174,140 @@ def git(repo_path: str, *args: str, check: bool = True) -> subprocess.CompletedP
     )
 
 
-# ─── Security review ─────────────────────────────────────────────────────────
+# ─── LLM security review ────────────────────────────────────────────────────
 
 
-def fetch_security_reviews(api_base: str, token: str, gitea_user: str,
-                           project: str, branch: str) -> None:
-    """Find PRs for the branch and display security review comments."""
-    print("\n── Security Review (automated) ──")
+def call_anthropic(prompt: str, api_key: str, model: str, endpoint: str, max_tokens: int) -> str:
+    """Call the Anthropic Messages API."""
+    body = json.dumps({
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
 
-    # Paginate all PRs, filter by head branch
-    matching_prs: list[dict] = []
-    page = 1
-    page_size = 50
-    while True:
-        try:
-            prs = gitea_get(api_base, token,
-                            f"/repos/{gitea_user}/{project}/pulls?state=all&page={page}&limit={page_size}")
-        except (HTTPError, URLError) as e:
-            print(f"  (Could not reach Gitea API: {e})")
-            return
-        if not isinstance(prs, list):
-            break
-        for pr in prs:
-            if pr.get("head", {}).get("ref") == branch:
-                matching_prs.append(pr)
-        if len(prs) < page_size:
-            break
-        page += 1
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
 
-    # Collect security review comments from matching PRs
-    review_bodies: list[str] = []
-    for pr in matching_prs:
-        pr_number = pr["number"]
-        try:
-            comments = gitea_get(api_base, token,
-                                 f"/repos/{gitea_user}/{project}/issues/{pr_number}/comments")
-        except (HTTPError, URLError):
-            continue
-        if not isinstance(comments, list):
-            continue
-        for c in comments:
-            body = c.get("body", "")
-            user = c.get("user", {}).get("login", "")
-            if REVIEW_MARKER in body and user == BOT_USER:
-                review_bodies.append(body)
+    req = Request(f"{endpoint}/v1/messages", data=body, headers=headers, method="POST")
 
-    print(f"  Found {len(matching_prs)} PR(s), {len(review_bodies)} security review(s).")
+    try:
+        with urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode())
+            for block in result.get("content", []):
+                if block.get("type") == "text":
+                    return block["text"]
+            return "*Review returned empty response.*"
+    except (HTTPError, URLError) as e:
+        return f"*Review failed: {e}*"
 
-    if not review_bodies:
-        print("  (No automated security review found for this branch)")
-    elif all(NO_ISSUES_TEXT in b and "### [SEVERITY:" not in b for b in review_bodies):
-        print("  No security issues found.")
-    else:
-        print()
-        for body in review_bodies:
-            print(body)
-            print()
+
+def call_openai_compatible(prompt: str, api_key: str, model: str, endpoint: str,
+                           max_tokens: int) -> str:
+    """Call an OpenAI-compatible Chat Completions API (OpenAI, OpenRouter, local)."""
+    body = json.dumps({
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
+
+    headers: dict[str, str] = {"content-type": "application/json"}
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+
+    req = Request(f"{endpoint}/v1/chat/completions", data=body, headers=headers, method="POST")
+
+    try:
+        with urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode())
+            choices = result.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", "*Empty response.*")
+            return "*Review returned empty response.*"
+    except (HTTPError, URLError) as e:
+        return f"*Review failed: {e}*"
+
+
+PROVIDERS = {
+    "anthropic": call_anthropic,
+    "openai": call_openai_compatible,
+    "openrouter": call_openai_compatible,
+    "local": call_openai_compatible,
+}
+
+
+def call_llm(diff: str, provider: str, api_key: str, model: str, endpoint: str,
+             prompt_template: str, max_diff_size: int, max_tokens: int) -> str:
+    """Send the diff to the configured LLM for security review."""
+    if not api_key and provider != "local":
+        return "*Review skipped: REVIEWER_API_KEY not configured.*"
+
+    provider_fn = PROVIDERS.get(provider)
+    if not provider_fn:
+        return f"*Review skipped: unknown provider '{provider}'.*"
+
+    prompt = prompt_template.format(diff=diff[:max_diff_size])
+    return provider_fn(prompt, api_key, model, endpoint, max_tokens)
+
+
+def review_diff(repo_path: str, ref: str, base_branch: str) -> bool:
+    """Compute git diff, send to LLM, display review. Returns True if safe to proceed."""
+    print("\n── Security Review (LLM) ──")
+
+    review_cfg = load_review_config()
+    if not review_cfg:
+        print("  (Reviewer not configured. Run 'fetch-sandbox.py setup' to enable.)")
+        return True
+
+    provider, api_key, model, endpoint = review_cfg
+
+    if not endpoint:
+        endpoint = PROVIDER_ENDPOINTS.get(provider, "")
+    if not endpoint:
+        print(f"  (No endpoint for provider '{provider}'. Set REVIEWER_ENDPOINT in .env.)")
+        return True
+    endpoint = endpoint.rstrip("/")
+
+    # Load prompt and tunables from review-config.yaml
+    yaml_cfg = load_yaml_config(SCRIPT_DIR / "review-config.yaml")
+    prompt_template = yaml_cfg.get("prompt", DEFAULT_PROMPT)
+    max_diff_size = int(yaml_cfg.get("max_diff_size", 100_000))
+    max_tokens = int(yaml_cfg.get("max_tokens", 4096))
+
+    # Compute diff
+    r = git(repo_path, "diff", f"{base_branch}...{ref}", check=False)
+    diff = r.stdout
+    if not diff:
+        print("  (No diff to review — branch matches base.)")
+        return True
+
+    print(f"  Provider: {provider} | Model: {model}")
+    print(f"  Diff size: {len(diff)} chars (limit: {max_diff_size})")
+    if len(diff) > max_diff_size:
+        print(f"  Warning: diff truncated from {len(diff)} to {max_diff_size} chars")
+    print("  Sending to LLM...", end=" ", flush=True)
+
+    review = call_llm(diff, provider, api_key, model, endpoint,
+                      prompt_template, max_diff_size, max_tokens)
+    print("done.\n")
+
+    if NO_ISSUES_TEXT in review and "### [SEVERITY:" not in review:
+        print(f"  {NO_ISSUES_TEXT}")
+        return True
+
+    print(review)
+    print()
+    answer = input("Security issues found. Proceed with merge? [y/N] ").strip()
+    return answer.lower() in ("y", "yes")
 
 
 # ─── Safety checks ────────────────────────────────────────────────────────────
 
 
-def run_safety_checks(repo_path: str, ref: str) -> None:
-    """Check for symlinks and auto-execute file modifications."""
+def run_safety_checks(repo_path: str, ref: str) -> str:
+    """Check for symlinks and auto-execute file modifications. Returns base_branch."""
     print("\n── Pre-Merge Safety Checks ──")
 
     # Symlinks
@@ -183,19 +338,140 @@ def run_safety_checks(repo_path: str, ref: str) -> None:
     return base_branch
 
 
+# ─── Review setup ─────────────────────────────────────────────────────────────
+
+
+def update_env_key(key: str, value: str) -> None:
+    """Update or append a key=value pair in .env."""
+    env_file = SCRIPT_DIR / ".env"
+    if not env_file.exists():
+        env_file.write_text(f"{key}={value}\n")
+        return
+    lines = env_file.read_text().splitlines()
+    found = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"# {key}="):
+            lines[i] = f"{key}={value}"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}")
+    env_file.write_text("\n".join(lines) + "\n")
+
+
+def cmd_setup() -> None:
+    """Interactive reviewer configuration — configure LLM provider, key, model."""
+    print("=== Reviewer Setup ===\n")
+
+    # Provider
+    providers = ["anthropic", "openai", "openrouter", "local"]
+    print(f"LLM provider ({', '.join(providers)}): ", end="", flush=True)
+    provider = input().strip()
+    if provider not in providers:
+        die(f"Invalid provider '{provider}'. Must be one of: {', '.join(providers)}")
+
+    # API key (skip for local)
+    api_key = ""
+    if provider != "local":
+        current_key = ""
+        review_cfg = load_review_config()
+        if review_cfg:
+            current_key = review_cfg[1]
+        masked = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else current_key
+        print(f"API key [{masked or 'not set'}]: ", end="", flush=True)
+        choice = input().strip()
+        api_key = choice if choice else current_key
+        if not api_key:
+            die("API key is required for non-local providers.")
+
+    # Model
+    print("Model: ", end="", flush=True)
+    model = input().strip()
+    if not model:
+        die("Model name is required.")
+
+    # Endpoint (required for local, optional for others)
+    endpoint = ""
+    if provider == "local":
+        current_ep = ""
+        review_cfg = load_review_config()
+        if review_cfg:
+            current_ep = review_cfg[3]
+        print(f"Endpoint [{current_ep or 'not set'}]: ", end="", flush=True)
+        choice = input().strip()
+        endpoint = choice if choice else current_ep
+        if not endpoint:
+            die("Endpoint is required for local provider.")
+
+    # Health check — verify credentials before saving
+    print("\nVerifying credentials...", end=" ", flush=True)
+    check_ep = (endpoint or PROVIDER_ENDPOINTS.get(provider, "")).rstrip("/")
+    if provider == "anthropic":
+        check_url = f"{check_ep}/v1/messages"
+        check_headers: dict[str, str] = {
+            "x-api-key": api_key, "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+    else:
+        check_url = f"{check_ep}/v1/chat/completions"
+        check_headers = {"content-type": "application/json"}
+        if api_key:
+            check_headers["authorization"] = f"Bearer {api_key}"
+    check_body = json.dumps({
+        "model": model, "max_tokens": 1,
+        "messages": [{"role": "user", "content": "Say OK"}],
+    }).encode()
+    try:
+        req = Request(check_url, data=check_body, method="POST", headers=check_headers)
+        with urlopen(req, timeout=30) as resp:
+            resp.read()
+        print("OK")
+    except HTTPError as e:
+        body = e.read().decode(errors="replace")[:300]
+        die(f"health check failed — POST {check_url} returned HTTP {e.code}: {body}")
+    except URLError as e:
+        die(f"health check failed — POST {check_url}: {e.reason}")
+
+    # Write to .env
+    print("Saving configuration...")
+    update_env_key("REVIEWER_PROVIDER", provider)
+    update_env_key("REVIEWER_API_KEY", api_key)
+    update_env_key("REVIEWER_MODEL", model)
+    if endpoint:
+        update_env_key("REVIEWER_ENDPOINT", endpoint)
+
+    print(f"""
+=== Reviewer Ready ===
+Provider:  {provider}
+Model:     {model}
+Reviews will run automatically when you use fetch-sandbox.py.""")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    if len(sys.argv) < 3:
-        print("Usage: python fetch-sandbox.py <repo_path> <branch>")
+    # Dispatch subcommand
+    if len(sys.argv) >= 2 and sys.argv[1] == "setup":
+        cmd_setup()
+        return
+
+    skip_review = "--skip-review" in sys.argv
+    argv = [a for a in sys.argv if a != "--skip-review"]
+
+    if len(argv) < 3:
+        print("Usage: python fetch-sandbox.py <repo_path> <branch> [--skip-review]")
+        print("       python fetch-sandbox.py setup")
         print()
-        print("  repo_path  Path to your local git repository")
-        print("  branch     Branch name on the staging remote (e.g. agent/feature-branch, main)")
+        print("  repo_path      Path to your local git repository")
+        print("  branch         Branch name on the staging remote (e.g. agent/feature-branch, main)")
+        print("  --skip-review  Skip the LLM security review step")
+        print("  setup          Configure LLM provider for security reviews")
         sys.exit(1)
 
-    repo_path = os.path.abspath(sys.argv[1])
-    branch = sys.argv[2]
+    repo_path = os.path.abspath(argv[1])
+    branch = argv[2]
 
     project = os.path.basename(repo_path)
     gitea_user = f"agent-{project}"
@@ -208,17 +484,13 @@ def main() -> None:
         die(f"Not a git repository: {repo_path}")
 
     # Load config
-    gitea_port, gitea_admin_token = load_env()
-    api_base = f"http://localhost:{gitea_port}/api/v1"
+    gitea_port, _ = load_env()
 
     print(f"{'=' * 64}")
     print(f"  fetch-sandbox: {project} / {branch}")
     print(f"{'=' * 64}")
 
-    # ── Step 1: Security review (API only) ──
-    fetch_security_reviews(api_base, gitea_admin_token, gitea_user, project, branch)
-
-    # ── Step 2: Staging remote + fetch ──
+    # ── Step 1: Staging remote + fetch ──
     r = git(repo_path, "remote", check=False)
     has_staging = "staging" in r.stdout.splitlines()
 
@@ -229,7 +501,7 @@ def main() -> None:
         print(f"  URL: {staging_url}")
         answer = input("\nAdd staging remote? [Y/n] ").strip() or "Y"
         if answer.lower() not in ("y", "yes"):
-            print("Stopped. Security review info shown above.")
+            print("Stopped.")
             return
         git(repo_path, "remote", "add", "staging", staging_url)
         print("Added 'staging' remote.")
@@ -251,8 +523,15 @@ def main() -> None:
                 print(f"  {line.removeprefix('staging/')}")
         sys.exit(1)
 
-    # ── Step 3: Safety checks (git-based, needs fetched refs) ──
+    # ── Step 2: Safety checks (git-based, needs fetched refs) ──
     base_branch = run_safety_checks(repo_path, ref)
+
+    # ── Step 3: LLM security review ──
+    if not skip_review:
+        safe = review_diff(repo_path, ref, base_branch)
+        if not safe:
+            print("\nMerge cancelled by user after security review.")
+            return
 
     # ── Step 4: Merge ──
     print(f"\n{'=' * 64}")

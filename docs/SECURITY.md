@@ -21,7 +21,7 @@
 | Router goes down | Fail-closed: internal network has no gateway, agent loses all external connectivity |
 | Poisoned code enters real repo | Gitea air gap + LLM security review + human review |
 | Symlinks/dotfiles auto-execute | Pre-merge safety checks flag them |
-| Agent modifies its own review | Separate API key, separate container |
+| Agent modifies its own review | Separate API key, runs on host only at fetch time |
 | Agent accesses other projects | Per-project Gitea user + per-project network isolation |
 | Compromised agent attacks others | Per-project networks prevent inter-agent communication |
 
@@ -50,7 +50,6 @@ graph LR
     subgraph dev-sandbox ["dev-sandbox (has internet)"]
         Router[Router / NAT]
         Gitea
-        Review
     end
     AgentA -->|routed| Router -->|NAT| Web((Internet))
     AgentA -->|direct| Gitea
@@ -70,8 +69,8 @@ This means:
   ICMP are allowed. Use `--open-egress` to allow all destination ports for e.g. MCP servers.
 - **Native networking** — `ping`, `apt`, `pip`, `curl`, and any tool that expects
   normal internet access work out of the box. No proxy configuration needed.
-- **Infrastructure access** — Gitea, router, and review service are connected to
-  each agent's network on demand, so the agent can reach them directly.
+- **Infrastructure access** — Gitea and the router are connected to each agent's
+  network on demand, so the agent can reach them directly.
 - **Route injection** — the agent's default route is set via a throwaway privileged
   container (`docker run --rm --privileged --network container:<agent> alpine ip route ...`).
   The agent never receives NET_ADMIN and cannot modify its own routing.
@@ -106,7 +105,7 @@ All exceptions are defined in the workflow files or `.trivyignore.yaml`, visible
 
 ### Not covered
 
-The static analysis scans Dockerfiles as text (config mode) — it does **not** pull, build, or scan container images. This means **base image vulnerabilities** (CVEs in `alpine:3.20`, `python:3.12-alpine`, `continuumio/miniconda3`, etc.) are not detected. These depend on upstream maintainers and the user's local image freshness.
+The static analysis scans Dockerfiles as text (config mode) — it does **not** pull, build, or scan container images. This means **base image vulnerabilities** (CVEs in `alpine:3.20`, `continuumio/miniconda3`, etc.) are not detected. These depend on upstream maintainers and the user's local image freshness.
 
 
 ## ◾ Barrier Testing
@@ -136,7 +135,7 @@ With `--docker`, the container runs under [Sysbox](https://github.com/nestybox/s
 | **LAN/RFC1918 blocking** | Router drops RFC1918 | Unchanged |
 | **Gitea access** | Per-project user + token | Unchanged |
 | **Host filesystem** | Docker volume, no bind mount | Unchanged |
-| **Review service** | Separate container, separate API key | Unchanged |
+| **Security review** | Runs on host via `fetch-sandbox.py` | Unchanged |
 
 **Why capabilities inside Sysbox are safe:** Sysbox maps the container's UID 0 to an unprivileged host UID via user namespaces. A process with SYS_ADMIN inside the container can mount filesystems *within* the namespace but cannot affect the host. Similarly, NET_ADMIN allows network configuration inside the container's network namespace but cannot modify host routing or reach other containers. This is the same isolation model used by rootless Docker and Podman.
 
@@ -155,8 +154,9 @@ VS Code (for instance) automatically forwards your SSH agent, git credentials, a
 Extensions run with full container permissions.
 An update can re-enable unhardened defaults.
 
-### Why not use the agent's own Claude Code for reviews instead of a separate API key?
+### Why not use an agent for reviews instead of a separate API key?
 
-The review service runs in a separate container with no access to the agent's filesystem, `CLAUDE.md`, or `.claude/` directory. It receives only the raw diff and a security prompt.
-This trust-domain separation matters because a compromised agent can poison its own context — writing invisible Unicode instructions into `CLAUDE.md`, planting files with prompt-injection payloads, or modifying `~/.claude/settings.json` — and any Claude Code invocation inside the same container would inherit that poisoned state. 
-A self-review is not an independent review.
+Two reasons: state isolation and prompt injection risk.
+
+The review runs on the host via `fetch-sandbox.py` — a stateless one-shot LLM call with only the raw diff and a security prompt. It has no persistent context that can be corrupted.
+A userland agent (Claude Code, Codex, etc.) carries mutable state: `CLAUDE.md`, `~/.claude/settings.json`, conversation history, files in the workspace. The diff being reviewed could contain prompt injection — crafted code comments, Unicode tricks, or payload filenames — that infects the agent's context permanently. Once compromised, every subsequent action by that agent is untrustworthy, including future reviews. A separate, stateless review avoids this entirely.

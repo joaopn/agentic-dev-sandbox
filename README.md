@@ -36,7 +36,6 @@ python fetch-sandbox.py <myproject local repo> <agent branch name>
 
 [◾ How it works](#-how-it-works)
 [◾ Repo Watch](#-repo-watch)
-[◾ Reviewer](#-reviewer)
 [◾ Prerequisites](#-prerequisites)
 
 [◾ Quick Start](#-quick-start)
@@ -61,7 +60,7 @@ graph LR
 - **Local Gitea** mirrors your GitHub repos. The agent pushes to Gitea, never to GitHub
 - **Agent containers** are per-project, disposable, and hardened. They can't access your LAN
   - [Optional] **Repo Watch** has the agent monitoring Gitea Issues and working on them automatically
-  - [Optional] **Review service** posts automated security reviews (backdoors, exfiltration, dependency manipulation) on `/security` command
+  - [Optional] **Security review** runs at fetch time — the diff is sent to an LLM for automated security analysis (backdoors, exfiltration, dependency manipulation)
 - You review code e.g. in the Gitea webui and fetch it back
 - You merge what you want back to GitHub (human-in-the-loop)
 
@@ -88,20 +87,6 @@ claude                # authenticate first
 
 The last agent comment also attaches its full internal (thinking) log as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
 
-## ◾ Reviewer
-
-An isolated bot (`bot-security`) can review PRs for security issues on command. Comment `/security` on any PR to trigger a review. The bot posts findings as a PR comment.
-
-<p align="center">
-  <img src="docs/img/bot.png" width="600" alt="Repo Watch example">
-</p>
-
-To use:
-```bash
-python sandbox.py review setup   # configure provider, key, model (one-time), starts
-```
-
-See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and customization.
 
 ## ◾ Prerequisites
 
@@ -111,7 +96,7 @@ See [Reviewer](docs/GUIDE.md#reviewer) in the guide for provider options and cus
 > [!TIP]
 > Optional:
 > - `GITHUB_PAT` — A read-only GitHub Personal Access Token (PAT), **only if mirroring private repos**. Only Gitea sees it.
-> - `REVIEWER_API_KEY` — an LLM API key needed if the optional `bot-security` is enabled (supports Anthropic, OpenAI, OpenRouter, or local). Only the reviewer service sees it.
+> - `REVIEWER_API_KEY` — an LLM API key for automatic security reviews at fetch time (supports Anthropic, OpenAI, OpenRouter, or local). Never enters any container.
 > - [Sysbox](https://github.com/nestybox/sysbox#installation) — only if using `--docker` for Docker-in-Docker support.
 
 To generate the GitHub PAT:
@@ -125,8 +110,8 @@ To generate the GitHub PAT:
 # 1. One-time setup (starts Gitea, router)
 python sandbox.py setup
 
-# 2 [Optional]: configure and start the reviewer service
-python sandbox.py review setup
+# 2 [Optional]: configure LLM provider for security reviews at fetch time
+python fetch-sandbox.py setup
 
 # 3. Create a sandboxed project with python and Claude Code
 python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
@@ -145,7 +130,7 @@ python sandbox.py attach myproject
 
 ## From the CLI:
 python fetch-sandbox.py <repo path> <branch to fetch>
-## Shows security review, symlink check, auto-execute file check
+## LLM security review, symlink check, auto-execute file check
 ## Adds the changes as unstaged changes to the current branch
 ```
 
@@ -168,15 +153,14 @@ Commands:
   pause <project|--all>          Freeze container(s) in place (cgroup)
   unpause <project|--all>        Resume frozen container(s)
   sync <project>                 Trigger Gitea mirror sync from GitHub
-  review setup                   Configure and start the review service
-  review on / off                Toggle reviewer without re-prompting
   recreate <project> [opts]      New container + fresh volume + fresh token
   status                         List all projects, containers, ports
   destroy <project>              Remove container, volume, Gitea user + repos
   logs <project>                 Tail container logs
 
 Standalone script (run from your real repo):
-  python fetch-sandbox.py <repo_path> <branch>   Security review, safety checks, staging remote setup + merge
+  python fetch-sandbox.py setup                                  Configure LLM provider for security reviews
+  python fetch-sandbox.py <repo_path> <branch> [--skip-review]   LLM security review, safety checks, staging remote setup + merge
 
 Create/recreate options:
   --profile <name>               Agent image profile (required)
@@ -198,7 +182,8 @@ Create/recreate options:
 ```
 agentic-dev-sandbox/
 ├── sandbox.py                    Main CLI (Python 3, stdlib only)
-├── docker-compose.yml            Gitea + review service + router
+├── docker-compose.yml            Gitea + router
+├── review-config.yaml            Security review prompt and tunables
 ├── .env                          Config + secrets (gitignored)
 ├── .env.example                  Template
 ├── container/                    Files copied into each agent workspace
@@ -209,10 +194,6 @@ agentic-dev-sandbox/
 ├── agent/
 │   ├── Dockerfile.python         Agent image: conda, git, byobu, sshd
 │   └── entrypoint.sh            Clone, configure git, start sshd + byobu (shared)
-├── review/
-│   ├── Dockerfile                Review service image
-│   ├── review-server.py          Webhook listener: diff → LLM review → comment
-│   └── review-config.yaml        Prompt, provider endpoints, tunables
 ├── router/
 │   ├── Dockerfile                NAT router image (Alpine + iptables)
 │   └── scripts/
@@ -231,11 +212,11 @@ agentic-dev-sandbox/
 
 ## ◾ Roadmap
 - Script support for other agentic platforms besides Claude Code (Codex, Aider)
-- Podman repo support
-- Podman container support
+- Podman support (both repo and sandbox)
+- multi-user support
 
 ## ◾ Further Reading
-- **[docs/GUIDE.md](docs/GUIDE.md)** — Image profiles, reviewer configuration, VS Code Remote-SSH, networking details, `container/` directory, git remotes, repo-watch internals, FAQ.
+- **[docs/GUIDE.md](docs/GUIDE.md)** — Image profiles, reviewer setup, VS Code Remote-SSH, networking details, `container/` directory, git remotes, repo-watch internals, FAQ.
 - **[docs/SECURITY.md](docs/SECURITY.md)** — Threat model, network isolation, static analysis design, what's prevented and what isn't.
 
 <div align="center">
