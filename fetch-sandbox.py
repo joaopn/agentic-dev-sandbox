@@ -2,11 +2,13 @@
 """fetch-sandbox — Fetch agent branch from sandbox Gitea, run security review and safety checks.
 
 Usage:
-    python fetch-sandbox.py <repo_path> <branch> [--skip-review]
+    python fetch-sandbox.py <repo_path> <branch> [--remote <name>] [--base <branch>] [--skip-review]
     python fetch-sandbox.py setup
 
     repo_path      Path to your local git repository
-    branch         Branch name on the staging remote (e.g. agent/feature-branch, main)
+    branch         Branch name to fetch (e.g. agent/feature-branch, main)
+    --remote       Use a pre-configured git remote instead of fetching by URL
+    --base         Override base branch for diff computation (default: auto-detect)
     --skip-review  Skip the LLM security review step
     setup          Configure LLM provider for security reviews (interactive)
 """
@@ -455,105 +457,22 @@ Reviews will run automatically when you use fetch-sandbox.py.""")
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
-def main() -> None:
-    # Dispatch subcommand
-    if len(sys.argv) >= 2 and sys.argv[1] == "setup":
-        cmd_setup()
-        return
-
-    skip_review = "--skip-review" in sys.argv
-    base_override = ""
-    argv = []
-    i = 1
-    while i < len(sys.argv):
-        if sys.argv[i] == "--skip-review":
-            i += 1
-            continue
-        if sys.argv[i] == "--base" and i + 1 < len(sys.argv):
-            base_override = sys.argv[i + 1]
-            i += 2
-            continue
-        argv.append(sys.argv[i])
-        i += 1
-
-    if len(argv) < 2:
-        print("Usage: python fetch-sandbox.py <repo_path> <branch> [--base <branch>] [--skip-review]")
-        print("       python fetch-sandbox.py setup")
-        print()
-        print("  repo_path      Path to your local git repository")
-        print("  branch         Branch name on the staging remote (e.g. agent/feature-branch, main)")
-        print("  --base         Override base branch for diff computation (default: auto-detect)")
-        print("  --skip-review  Skip the LLM security review step")
-        print("  setup          Configure LLM provider for security reviews")
-        sys.exit(1)
-
-    repo_path = os.path.abspath(argv[0])
-    branch = argv[1]
-
-    project = os.path.basename(repo_path)
-    gitea_user = f"agent-{project}"
-    ref = f"staging/{branch}"
-
-    # Validate git repo
-    r = subprocess.run(["git", "-C", repo_path, "rev-parse", "--is-inside-work-tree"],
-                       capture_output=True, text=True, check=False)
-    if r.returncode != 0:
-        die(f"Not a git repository: {repo_path}")
-
-    # Load config
-    gitea_port, _ = load_env()
-
-    print(f"{'=' * 64}")
-    print(f"  fetch-sandbox: {project} / {branch}")
-    print(f"{'=' * 64}")
-
-    # ── Step 1: Staging remote + fetch ──
-    r = git(repo_path, "remote", check=False)
-    has_staging = "staging" in r.stdout.splitlines()
-
-    staging_url = f"http://localhost:{gitea_port}/{gitea_user}/{project}.git"
-
-    if not has_staging:
-        print(f"\nThe 'staging' remote is not configured.")
-        print(f"  URL: {staging_url}")
-        answer = input("\nAdd staging remote? [Y/n] ").strip() or "Y"
-        if answer.lower() not in ("y", "yes"):
-            print("Stopped.")
-            return
-        git(repo_path, "remote", "add", "staging", staging_url)
-        print("Added 'staging' remote.")
-
-    print("\nFetching from staging...")
-    r = git(repo_path, "fetch", "staging", check=False)
-    if r.returncode != 0:
-        die(f"git fetch staging failed:\n{r.stderr}")
-
-    # Verify branch exists
-    r = git(repo_path, "rev-parse", ref, check=False)
-    if r.returncode != 0:
-        print(f"Error: Branch {branch} not found on staging remote.", file=sys.stderr)
-        print("\nAvailable staging branches:")
-        r = git(repo_path, "branch", "-r", check=False)
-        for line in r.stdout.splitlines():
-            line = line.strip()
-            if line.startswith("staging/"):
-                print(f"  {line.removeprefix('staging/')}")
-        sys.exit(1)
-
-    # ── Step 2: Safety checks (git-based, needs fetched refs) ──
+def _run_review_and_merge(repo_path: str, ref: str,
+                          base_override: str, skip_review: bool) -> None:
+    """Run safety checks, optional LLM review, and squash-merge."""
+    # Safety checks
     base_branch = run_safety_checks(repo_path, ref, base_override)
 
-    # ── Step 3: LLM security review ──
+    # LLM security review
     if not skip_review:
         safe = review_diff(repo_path, ref, base_branch)
         if not safe:
             print("\nMerge cancelled by user after security review.")
             return
 
-    # ── Step 4: Merge ──
+    # Merge
     print(f"\n{'=' * 64}")
 
-    # Get current local branch name
     r = git(repo_path, "rev-parse", "--abbrev-ref", "HEAD", check=False)
     local_branch = r.stdout.strip() if r.returncode == 0 else "unknown"
 
@@ -565,6 +484,113 @@ def main() -> None:
 
     git(repo_path, "reset", "HEAD", check=False)
     print(f"\nDone — changes applied as unstaged modifications on {local_branch}.")
+
+
+def main() -> None:
+    # Dispatch subcommand
+    if len(sys.argv) >= 2 and sys.argv[1] == "setup":
+        cmd_setup()
+        return
+
+    skip_review = "--skip-review" in sys.argv
+    base_override = ""
+    remote_name = ""
+    argv = []
+    i = 1
+    while i < len(sys.argv):
+        if sys.argv[i] == "--skip-review":
+            i += 1
+            continue
+        if sys.argv[i] == "--base" and i + 1 < len(sys.argv):
+            base_override = sys.argv[i + 1]
+            i += 2
+            continue
+        if sys.argv[i] == "--remote" and i + 1 < len(sys.argv):
+            remote_name = sys.argv[i + 1]
+            i += 2
+            continue
+        argv.append(sys.argv[i])
+        i += 1
+
+    if len(argv) < 2:
+        print("Usage: python fetch-sandbox.py <repo_path> <branch> [--remote <name>] [--base <branch>] [--skip-review]")
+        print("       python fetch-sandbox.py setup")
+        print()
+        print("  repo_path      Path to your local git repository")
+        print("  branch         Branch name to fetch (e.g. agent/feature-branch, main)")
+        print("  --remote       Use a pre-configured git remote instead of fetching by URL")
+        print("  --base         Override base branch for diff computation (default: auto-detect)")
+        print("  --skip-review  Skip the LLM security review step")
+        print("  setup          Configure LLM provider for security reviews")
+        sys.exit(1)
+
+    repo_path = os.path.abspath(argv[0])
+    branch = argv[1]
+
+    project = os.path.basename(repo_path)
+    gitea_user = f"agent-{project}"
+
+    # Validate git repo
+    r = subprocess.run(["git", "-C", repo_path, "rev-parse", "--is-inside-work-tree"],
+                       capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        die(f"Not a git repository: {repo_path}")
+
+    # Load config
+    gitea_port, _ = load_env()
+
+    # Compute fetch URL and ref
+    sandbox_url = f"http://localhost:{gitea_port}/{gitea_user}/{project}.git"
+    if remote_name:
+        ref = f"{remote_name}/{branch}"
+    else:
+        ref = f"refs/sandbox-fetch/{branch}"
+
+    print(f"{'=' * 64}")
+    print(f"  fetch-sandbox: {project} / {branch}")
+    print(f"{'=' * 64}")
+
+    # ── Fetch and merge ──
+    if remote_name:
+        # --remote mode: use a pre-configured remote
+        print(f"\nFetching from remote '{remote_name}'...")
+        r = git(repo_path, "fetch", remote_name, check=False)
+        if r.returncode != 0:
+            die(f"git fetch {remote_name} failed:\n{r.stderr}")
+
+        r = git(repo_path, "rev-parse", ref, check=False)
+        if r.returncode != 0:
+            print(f"Error: Branch '{branch}' not found on remote '{remote_name}'.", file=sys.stderr)
+            print(f"\nAvailable branches on '{remote_name}':")
+            r = git(repo_path, "branch", "-r", check=False)
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if line.startswith(f"{remote_name}/"):
+                    print(f"  {line.removeprefix(f'{remote_name}/')}")
+            sys.exit(1)
+
+        _run_review_and_merge(repo_path, ref, base_override, skip_review)
+
+    else:
+        # URL-fetch mode: fetch into a temporary ref, clean up afterward
+        print(f"\nFetching '{branch}' from {sandbox_url}...")
+        r = git(repo_path, "fetch", sandbox_url,
+                f"{branch}:{ref}", check=False)
+        if r.returncode != 0:
+            print(f"Error: Branch '{branch}' not found at {sandbox_url}", file=sys.stderr)
+            print("\nAvailable branches:")
+            r = git(repo_path, "ls-remote", "--heads", sandbox_url, check=False)
+            if r.returncode == 0:
+                for line in r.stdout.splitlines():
+                    parts = line.split("\t")
+                    if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+                        print(f"  {parts[1].removeprefix('refs/heads/')}")
+            sys.exit(1)
+
+        try:
+            _run_review_and_merge(repo_path, ref, base_override, skip_review)
+        finally:
+            git(repo_path, "update-ref", "-d", ref, check=False)
 
 
 if __name__ == "__main__":

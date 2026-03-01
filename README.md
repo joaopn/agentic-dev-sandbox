@@ -125,9 +125,6 @@ python sandbox.py attach myproject
 # 5. Review the agent's committed work
 ## From the Gitea GUI: http://localhost:3000 (default port)
 
-## From your real repo: add the Gitea remote with
-## `git remote add staging http://localhost:3000/agent-myproject/myproject.git`
-
 ## From the CLI:
 python fetch-sandbox.py <repo path> <branch to fetch>
 ## LLM security review, symlink check, auto-execute file check
@@ -161,7 +158,7 @@ Commands:
 
 Standalone script (run from your real repo):
   python fetch-sandbox.py setup                                              Configure LLM provider for security reviews
-  python fetch-sandbox.py <repo_path> <branch> [--base <b>] [--skip-review]  Fetch, review, and merge agent work
+  python fetch-sandbox.py <repo_path> <branch> [--remote <name>] [--base <b>] [--skip-review]  Fetch, review, and merge agent work
 
 Create/recreate options:
   --profile <name>               Agent image profile (required)

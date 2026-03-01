@@ -867,7 +867,6 @@ Gitea login: sandbox-admin / {cfg.gitea_admin_password}
 Egress:    {egress_label}{branch_label}
 
 To review agent work from your real repo:
-  git remote add staging http://localhost:{cfg.gitea_port}/{gitea_user}/{project}.git
   python fetch-sandbox.py <repo-path> <branch-name>""")
 
 

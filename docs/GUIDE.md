@@ -153,25 +153,27 @@ Displaying the password is not a security issue, as anyone with docker permissio
 
 ## ◾ Fetch Sandbox
 
-`fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It adds a `staging` git remote pointing at the local Gitea instance, fetches the requested branch, runs safety checks and an optional LLM security review, then merges.
+`fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It fetches the requested branch directly by URL from the local Gitea instance, runs safety checks and an optional LLM security review, then merges. No git remote is added to your repo.
 
 ```bash
 python fetch-sandbox.py /path/to/your/repo agent/feature-branch
 python fetch-sandbox.py /path/to/your/repo agent/feature-branch --base dev
 python fetch-sandbox.py /path/to/your/repo agent/feature-branch --skip-review
+python fetch-sandbox.py /path/to/your/repo agent/feature-branch --remote staging
 ```
 
 Use `--base <branch>` to specify which branch the diff is computed against (for safety checks and security review). By default, the script auto-detects the base from `refs/remotes/origin/HEAD`, falling back to `main`.
 
+Use `--remote <name>` to fetch from a pre-configured git remote instead of by URL. This is optional — by default the script fetches directly and leaves no trace in your git config.
+
 The script performs these steps in order:
 
-1. **Staging remote setup** — If the `staging` remote doesn't exist yet, prompts to add it (pointing at `http://localhost:<GITEA_PORT>/<agent-user>/<project>.git`).
-2. **Fetch** — Runs `git fetch staging` to pull all refs from the agent's Gitea fork.
-3. **Safety checks** — Scans the fetched ref for:
+1. **Fetch** — Fetches the requested branch by URL into a temporary ref (`refs/sandbox-fetch/<branch>`). The ref is cleaned up automatically after the operation.
+2. **Safety checks** — Scans the fetched ref for:
    - **Symlinks** — lists any symlinks and their targets.
    - **Auto-execute file modifications** — flags changes to files that run automatically (`.envrc`, `Makefile`, `package.json`, pre-commit hooks, `.gitmodules`, etc.).
-4. **LLM security review** — If configured (via `fetch-sandbox.py setup`), computes the git diff and sends it to the configured LLM provider for security analysis. Results are displayed inline. If security issues are found, you're prompted before proceeding.
-5. **Merge** — Applies the changes as unstaged modifications via `git merge --squash` + `git reset HEAD`.
+3. **LLM security review** — If configured (via `fetch-sandbox.py setup`), computes the git diff and sends it to the configured LLM provider for security analysis. Results are displayed inline. If security issues are found, you're prompted before proceeding.
+4. **Merge** — Applies the changes as unstaged modifications via `git merge --squash` + `git reset HEAD`.
 
 Requires `GITEA_ADMIN_TOKEN` in `.env` (set by `sandbox setup`).
 
