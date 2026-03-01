@@ -164,6 +164,18 @@ curl -s -X POST \
   "$GITEA_URL/api/v1/repos/$GITEA_USER/$REPO_NAME/issues"
 ```
 
+## Slash commands
+
+Users can prefix their comments with slash commands to control agent behavior:
+
+- `/plan` — Produce a structured plan without writing code
+- `/review` — Review the open PR and post findings
+- `/explain <topic>` — Explain a file, concept, or codebase area
+- `/test` — Run the test suite and report results
+
+When you see a slash command in the latest comment, follow the command's intent.
+The system enforces tool restrictions — you may find that certain tools are unavailable.
+
 ## Behavioral guidelines
 
 1. **Always respond first.** When you see a new issue or new comment, post a comment acknowledging it before starting work. Propose your approach for non-trivial changes.

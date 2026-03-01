@@ -263,6 +263,19 @@ tail -f container_volumes/<project>/.repo-watch-logs/current.jsonl
 
 Log files persist after completion and can be attached to issue comments.
 
+### Slash commands
+
+Users can prefix issue bodies or comments with slash commands to control agent behavior. Commands are defined in `~/issue-commands.json` inside the container (shipped from `container/issue-commands.json`).
+
+| Command | Effect |
+|---|---|
+| `/plan` | Produce a structured plan without writing code |
+| `/review` | Review the open PR and post findings |
+| `/explain <topic>` | Explain a file, concept, or codebase area |
+| `/test` | Run the test suite and report results |
+
+Each command can specify a `task_prefix` (prepended to the prompt) and `flags` (passed to the agent binary, e.g. `--disallowedTools`). To add or modify commands, edit `container/issue-commands.json`.
+
 ### Configuration
 
 | Variable | Effect | Default |

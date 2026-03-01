@@ -75,6 +75,8 @@ The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR
   <img src="docs/img/pirate.png" width="600" alt="Repo Watch example">
 </p>
 
+Prefix an issue body or comment with a slash command (`/plan`, `/explain`, `/review`, `/test`) to add predefined prompts and restrict the agent's behavior: e.g. `/plan` to use a planning prompt and disable file writing. Commands are defined in `container/issue-commands.json` and can be customized. 
+
 
 To use:
 ```bash
@@ -85,8 +87,7 @@ claude                # authenticate first
 ./agent-watch.sh      # view the agent activity in real-time (optional)
 ```
 
-The last agent comment also attaches its full internal (thinking) log as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
-
+Agent comments also attach its full internal (thinking) logs as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
 
 ## ◾ Prerequisites
 
@@ -188,7 +189,8 @@ agentic-dev-sandbox/
 │   ├── CLAUDE.md                 Default agent instructions
 │   ├── barrier-check.sh          Passive security posture checker
 │   ├── repo-watch.sh             Agentic loop: polls issues, invokes Claude Code
-│   └── repo-watch-prompt.md      Prompt template for repo-watch
+│   ├── repo-watch-prompt.md      Prompt template for repo-watch
+│   ├── issue-commands.json       Slash command definitions for repo-watch
 ├── agent/
 │   ├── Dockerfile.python         Agent image: conda, git, byobu, sshd
 │   └── entrypoint.sh            Clone, configure git, start sshd + byobu (shared)

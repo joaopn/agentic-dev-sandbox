@@ -1,0 +1,40 @@
+{
+  "commands": {
+    "/plan": {
+      "description": "Respond with a structured plan only, no code changes",
+      "task_prefix": "IMPORTANT: You are in PLANNING MODE. Analyze the codebase and produce a structured implementation plan. Do NOT modify any files or write any code. Structure your plan as: 1) Current state analysis, 2) Proposed changes (files + approach), 3) Risks and tradeoffs, 4) Testing strategy. Post your plan as a comment on the issue.",
+      "agents": {
+        "claude": {
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+        }
+      }
+    },
+    "/review": {
+      "description": "Review your own open PR and post findings",
+      "task_prefix": "Review your open PR for this issue. Read the full diff and check for: hardcoded values, missing error handling, test coverage gaps, security issues, and code style. Post your findings as a comment. Do NOT modify any code.",
+      "agents": {
+        "claude": {
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+        }
+      }
+    },
+    "/explain": {
+      "description": "Explain a file, concept, or area of the codebase",
+      "task_prefix": "Explain the requested topic. Provide a clear, thorough explanation with references to specific files and line numbers where relevant. Do NOT modify any files.",
+      "agents": {
+        "claude": {
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+        }
+      }
+    },
+    "/test": {
+      "description": "Run tests and report results without modifying code",
+      "task_prefix": "Run the test suite and report results. If tests fail, analyze the failures and explain likely causes. Do NOT modify any code or test files.",
+      "agents": {
+        "claude": {
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+        }
+      }
+    }
+  }
+}

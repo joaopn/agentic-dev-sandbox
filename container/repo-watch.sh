@@ -40,8 +40,16 @@ REPO_WATCH_MAX_TURNS="${REPO_WATCH_MAX_TURNS:-}"
 REPO_WATCH_MAX_BUDGET_USD="${REPO_WATCH_MAX_BUDGET_USD:-}"
 REPO_WATCH_TIMEOUT="${REPO_WATCH_TIMEOUT:-}"
 
+# Slash commands
+COMMANDS_FILE="${HOME}/issue-commands.json"
+COMMANDS_JSON='{"commands":{}}'
+
 # Last log file path (set by invoke_agent, used for post-processing)
 LAST_LOG_FILE=""
+
+# Currently matched slash command (set by detect_command, used by invoke_agent)
+MATCHED_COMMAND=""
+COMMAND_ARGS=""
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +64,53 @@ gitea() {
 
 log() {
     echo "[$(date '+%H:%M:%S')] $*"
+}
+
+# Load slash commands from JSON config file.
+load_commands() {
+    if [[ -f "$COMMANDS_FILE" ]]; then
+        COMMANDS_JSON=$(cat "$COMMANDS_FILE")
+        log "loaded $(echo "$COMMANDS_JSON" | jq '.commands | length') issue commands"
+    else
+        COMMANDS_JSON='{"commands":{}}'
+        log "no issue-commands.json found, slash commands disabled"
+    fi
+}
+
+# Detect if text starts with a known slash command.
+# Args: $1=comment_body
+# Sets globals: MATCHED_COMMAND (e.g. "/plan") and COMMAND_ARGS (rest of the line)
+# Returns: 0 if matched, 1 if not
+detect_command() {
+    local body="$1"
+    MATCHED_COMMAND=""
+    COMMAND_ARGS=""
+
+    local first_line
+    first_line=$(echo "$body" | head -1)
+
+    local cmd
+    for cmd in $(echo "$COMMANDS_JSON" | jq -r '.commands | keys[]'); do
+        if [[ "$first_line" == "$cmd" || "$first_line" == "$cmd "* ]]; then
+            MATCHED_COMMAND="$cmd"
+            COMMAND_ARGS="${first_line#"$cmd"}"
+            COMMAND_ARGS="${COMMAND_ARGS# }"  # trim leading space
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Build a jq filter expression that keeps known slash commands but filters
+# other /-prefixed comments (Gitea bot commands like /assign).
+# Prints: jq filter string for use in comment filtering
+build_comment_filter() {
+    local commands_regex
+    commands_regex=$(echo "$COMMANDS_JSON" | jq -r '
+        .commands | keys | map(gsub("/"; "\\/")) | join("|") |
+        if . == "" then "^$" else "^(" + . + ")([ \\t]|$)" end')
+
+    echo '(.body | test("^/") | not) or (.body | test("'"$commands_regex"'"))'
 }
 
 # Build prompt and invoke claude for a given issue/PR.
@@ -107,8 +162,42 @@ CONTEXT
     log "invoking claude for ${item_type} #${number}..."
     log "log: ${log_file}"
 
+    # Apply slash command modifications if a command was matched
+    if [[ -n "$MATCHED_COMMAND" ]]; then
+        local agent_type="claude"
+        local cmd_config
+        cmd_config=$(echo "$COMMANDS_JSON" | jq -r --arg cmd "$MATCHED_COMMAND" '.commands[$cmd]')
+
+        # Prepend task_prefix to the task file
+        local task_prefix
+        task_prefix=$(echo "$cmd_config" | jq -r '.task_prefix // empty')
+        if [[ -n "$task_prefix" ]]; then
+            local tmp
+            tmp=$(mktemp)
+            echo "$task_prefix" > "$tmp"
+            echo "" >> "$tmp"
+            cat "$task_file" >> "$tmp"
+            mv "$tmp" "$task_file"
+        fi
+
+        log "slash command: ${MATCHED_COMMAND} (args: ${COMMAND_ARGS:-none})"
+    fi
+
     # Build claude args
     local claude_args=(-p "$(cat "$task_file")" --output-format stream-json --verbose)
+
+    # Apply agent-specific flags from slash command config
+    if [[ -n "$MATCHED_COMMAND" ]]; then
+        local agent_type="claude"
+        local agent_flags
+        agent_flags=$(echo "$COMMANDS_JSON" | jq -r \
+            --arg cmd "$MATCHED_COMMAND" --arg agent "$agent_type" \
+            '.commands[$cmd].agents[$agent].flags // [] | .[]')
+        while IFS= read -r flag; do
+            [[ -n "$flag" ]] && claude_args+=("$flag")
+        done <<< "$agent_flags"
+    fi
+
     [[ -n "$REPO_WATCH_MAX_TURNS" ]] && claude_args+=(--max-turns "$REPO_WATCH_MAX_TURNS")
     [[ -n "$REPO_WATCH_MAX_BUDGET_USD" ]] && claude_args+=(--max-budget-usd "$REPO_WATCH_MAX_BUDGET_USD")
 
@@ -346,6 +435,10 @@ if [[ ! -d "${REPO_DIR}/.git" ]]; then
     exit 1
 fi
 
+# ── Load slash commands ──────────────────────────────────────────────────────
+
+load_commands
+
 # ── Bootstrap labels (idempotent) ────────────────────────────────────────────
 
 existing_labels=$(gitea GET "/repos/${REPO_PATH}/labels" | jq -r '.[].name')
@@ -402,16 +495,18 @@ while true; do
         comments_json=$(gitea GET "/repos/${REPO_PATH}/issues/${number}/comments")
         num_comments=$(echo "$comments_json" | jq 'length')
 
-        # Determine who spoke last (skip bot commands and automated responses)
+        # Determine who spoke last (skip bot commands and automated responses,
+        # but keep known slash commands so they trigger the agent)
         if [[ "$num_comments" -eq 0 ]]; then
             last_author="$author"
         else
-            last_author=$(echo "$comments_json" | jq -r '
-                [.[] | select(
-                    (.body | test("<!-- automated-security-review -->") | not)
-                    and (.body | test("^/") | not)
+            comment_filter=$(build_comment_filter)
+            last_author=$(echo "$comments_json" | jq -r \
+                "[.[] | select(
+                    (.body | test(\"<!-- automated-security-review -->\") | not)
+                    and ($comment_filter)
                 )]
-                | if length > 0 then .[-1].user.login else empty end')
+                | if length > 0 then .[-1].user.login else empty end")
             [[ -z "$last_author" ]] && last_author="$author"
         fi
 
@@ -426,6 +521,15 @@ while true; do
         fi
 
         log "${local_type} #${number} needs attention: ${title}"
+
+        # Check if the latest comment (or issue body, if no comments) is a slash command
+        if [[ "$num_comments" -gt 0 ]]; then
+            latest_body=$(echo "$comments_json" | jq -r '.[-1].body')
+        else
+            latest_body="$body"
+        fi
+        detect_command "$latest_body" || true
+        [[ -n "$MATCHED_COMMAND" ]] && log "command: ${MATCHED_COMMAND} ${COMMAND_ARGS}"
 
         formatted_comments=$(format_comments "$comments_json")
 
@@ -452,6 +556,9 @@ while true; do
     # Only runs if Pass 1 didn't handle anything.
     # Checks open PRs by the agent for reviews submitted after the agent's
     # last conversation comment.
+    # Clear slash command state — PR reviews don't use slash commands.
+    MATCHED_COMMAND=""
+    COMMAND_ARGS=""
 
     if [[ "$handled" == "false" ]]; then
         prs=$(gitea GET "/repos/${REPO_PATH}/pulls?state=open")
