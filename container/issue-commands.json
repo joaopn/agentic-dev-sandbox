@@ -23,13 +23,53 @@
       "task_prefix": "Explain the requested topic. Provide a clear, thorough explanation with references to specific files and line numbers where relevant. Do NOT modify any files.",
       "agents": {
         "claude": {
-          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit,Bash"]
         }
       }
     },
     "/test": {
       "description": "Run tests and report results without modifying code",
       "task_prefix": "Run the test suite and report results. If tests fail, analyze the failures and explain likely causes. Do NOT modify any code or test files.",
+      "agents": {
+        "claude": {
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+        }
+      }
+    },
+    "/search": {
+      "_comment": "Inspired by https://github.com/anthropics/claude-code-action (MIT license)",
+      "description": "Research a topic using web search, no code changes",
+      "task_prefix": "You are in RESEARCH MODE. Use web search and web fetch to research the requested topic. Provide a thorough answer with sources and references. Do NOT modify any files or write any code. Post your findings as a comment on the issue.",
+      "agents": {
+        "claude": {
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+        }
+      }
+    },
+    "/security": {
+      "_comment": "Inspired by https://github.com/anthropics/claude-code-security-review (MIT license)",
+      "description": "Security audit — check for vulnerabilities in code",
+      "task_prefix": "You are a senior security engineer conducting a focused security review. Analyze the codebase for HIGH-CONFIDENCE security vulnerabilities with real exploitation potential. Focus ONLY on security implications, not general code quality.\n\nSECURITY CATEGORIES TO EXAMINE:\n- Input Validation: SQL injection, command injection, path traversal, XXE, template injection\n- Authentication & Authorization: bypass logic, privilege escalation, session flaws, JWT vulnerabilities\n- Crypto & Secrets: hardcoded keys/passwords, weak algorithms, improper key storage\n- Injection & Code Execution: deserialization, eval injection, XSS (reflected, stored, DOM-based)\n- Data Exposure: sensitive data logging, PII handling, API data leakage, debug info exposure\n\nMETHODOLOGY:\n1. Repository context — identify existing security frameworks, patterns, and threat model\n2. Comparative analysis — compare changes against established secure practices\n3. Vulnerability assessment — trace data flow from inputs to sensitive operations, identify injection points\n\nSEVERITY GUIDELINES:\n- HIGH: Directly exploitable — RCE, data breach, auth bypass\n- MEDIUM: Requires specific conditions but significant impact\n- LOW: Defense-in-depth issues\n\nOnly flag issues where you are >80% confident of actual exploitability. Skip theoretical issues, style concerns, DoS, secrets-on-disk, rate limiting, or low-impact findings. For each finding, provide: file, line number, severity, category, description, exploit scenario, and fix recommendation.\n\nPost your findings as a comment on the issue. Do NOT modify any code.",
+      "agents": {
+        "claude": {
+          "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
+        }
+      }
+    },
+    "/fix": {
+      "_comment": "Inspired by https://github.com/wshobson/commands (MIT license)",
+      "description": "Diagnose and fix a specific bug or error",
+      "task_prefix": "BUGFIX MODE. Diagnose the reported bug or error systematically:\n1) Reproduce or locate the issue — find the relevant code and understand the failure\n2) Identify root cause — trace the execution path, check inputs/outputs, examine error messages\n3) Apply a minimal, targeted fix — change only what is necessary to resolve the issue\n4) Verify the fix — run existing tests if available, confirm the fix addresses the root cause\n5) Post a summary of what you found and what you changed as a comment on the issue\n\nDo NOT refactor surrounding code or make unrelated improvements. Keep the fix focused and minimal."
+    },
+    "/refactor": {
+      "_comment": "Inspired by https://github.com/wshobson/commands (MIT license)",
+      "description": "Improve code quality without changing behavior",
+      "task_prefix": "REFACTORING MODE. Improve code quality while preserving existing behavior:\n1) Analyze the target code for: code smells (long methods, duplication, magic numbers, poor naming), SOLID violations, and unnecessary complexity\n2) Prioritize improvements: start with high-impact/low-effort changes (extract constants, rename for clarity), then method extraction and decomposition\n3) Apply refactoring — ensure all changes preserve the existing behavior. Do NOT add new features or change functionality\n4) Verify: run existing tests if available. If tests break, the refactoring introduced a bug — fix it\n5) Post a summary of changes with before/after comparison as a comment on the issue"
+    },
+    "/deps": {
+      "_comment": "Inspired by https://github.com/wshobson/commands (MIT license)",
+      "description": "Audit dependencies for vulnerabilities and outdated packages",
+      "task_prefix": "DEPENDENCY AUDIT MODE. Analyze project dependencies for security and maintenance risks:\n1) Identify all dependency files (package.json, requirements.txt, go.mod, Cargo.toml, etc.)\n2) Check for known vulnerabilities — run available audit tools (npm audit, pip-audit, cargo audit, etc.)\n3) Identify outdated packages — list packages with available updates, noting major vs minor version bumps\n4) Flag high-risk dependencies — unmaintained packages, packages with known CVEs, packages with excessive transitive dependencies\n5) Provide actionable remediation: which packages to update, which to replace, and priority order\n\nPost your findings as a structured report in a comment on the issue. Do NOT modify any files.",
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]

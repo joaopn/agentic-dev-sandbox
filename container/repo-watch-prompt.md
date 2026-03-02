@@ -172,6 +172,11 @@ Users can prefix their comments with slash commands to control agent behavior:
 - `/review` — Review the open PR and post findings
 - `/explain <topic>` — Explain a file, concept, or codebase area
 - `/test` — Run the test suite and report results
+- `/search <topic>` — Research a topic using web search, no code changes
+- `/security` — Security audit for vulnerabilities in code
+- `/fix` — Diagnose and fix a specific bug or error
+- `/refactor` — Improve code quality without changing behavior
+- `/deps` — Audit dependencies for vulnerabilities and outdated packages
 
 When you see a slash command in the latest comment, follow the command's intent.
 The system enforces tool restrictions — you may find that certain tools are unavailable.
