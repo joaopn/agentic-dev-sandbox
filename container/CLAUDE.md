@@ -25,8 +25,25 @@ git merge upstream/{{BASE_BRANCH}}           # Get changes from the real GitHub 
 git push origin {{BASE_BRANCH}}              # Keep your fork up to date
 ```
 
-If `upstream/{{BASE_BRANCH}}` conflicts with `origin/{{BASE_BRANCH}}`: **upstream wins** — it is the real
-repo. See the conflict resolution section in `~/repo-watch-prompt.md` for details.
+### Conflict resolution: origin/{{BASE_BRANCH}} vs upstream/{{BASE_BRANCH}}
+
+If `git merge upstream/{{BASE_BRANCH}}` produces conflicts, **upstream wins** — it mirrors the
+real GitHub repo and is the maintainer's final word.
+
+```bash
+git merge --abort
+git reset --hard upstream/{{BASE_BRANCH}}
+git push origin {{BASE_BRANCH}} --force
+```
+
+This is safe because:
+- Your work lives on `agent/*` branches, not on `{{BASE_BRANCH}}`.
+- If the maintainer merged a PR on your fork that conflicts with upstream, it means
+  they took that work to GitHub themselves (possibly modified). The upstream version
+  already includes their final intent.
+- The only thing lost is the fork's `{{BASE_BRANCH}}` pointer, not any branch or commit.
+
+After resetting, continue normally: `git checkout -b agent/my-feature`.
 
 ### Branches
 
@@ -61,26 +78,13 @@ git push origin agent/my-feature
 - Run linters/formatters if configured in the project.
 - Do not push code you haven't verified.
 
-### External verification
-
-When you open or update a PR, trigger external verification by posting
-a comment on the PR. The system runs your tests in a clean container
-and posts results back. A test file or command is always required.
-
-- **Bug fix:** `/test-pr-bug tests/repro_<issue_number>.py agent/<branch>`
-- **General:** `/test-pr "<test_command>" agent/<branch>`
-
-If verification fails, read the output and fix the issue. If you cannot
-fix it after two attempts, explain the problem and ask the maintainer.
-
 ### Bug fix reproduction scripts
 
 When fixing a bug:
 1. Write `tests/repro_<issue_number>.py` (or `.sh`)
 2. It must exit non-zero when the bug EXISTS, exit 0 when FIXED
-3. Verify locally before triggering: run on base branch (should fail),
+3. Verify locally before pushing: run on base branch (should fail),
    run on your branch (should pass)
-4. The test file is attached to the verification result for maintainer review
 
 ## What You Have Access To
 
@@ -106,6 +110,3 @@ When fixing a bug:
 
 Your Gitea API token is in `$GITEA_TOKEN`. Base URL: `$GITEA_URL/api/v1`.
 Repo path: `$GITEA_USER/$REPO_NAME`.
-
-You can interact with issues and pull requests via curl. See `~/repo-watch-prompt.md`
-for API examples and workflow guidelines.

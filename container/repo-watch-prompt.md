@@ -21,33 +21,6 @@ git merge upstream/{{BASE_BRANCH}}
 git push origin {{BASE_BRANCH}}
 ```
 
-### Conflict resolution: origin/{{BASE_BRANCH}} vs upstream/{{BASE_BRANCH}}
-
-If `git merge upstream/{{BASE_BRANCH}}` produces conflicts, follow this logic:
-
-1. **`upstream` is the source of truth.** It mirrors the real GitHub repo — the
-   maintainer's final word. If they pushed something to GitHub that conflicts with
-   what's on your fork, they have already made their decision.
-
-2. **Reset to upstream and force-push your fork's {{BASE_BRANCH}}:**
-   ```bash
-   git merge --abort
-   git reset --hard upstream/{{BASE_BRANCH}}
-   git push origin {{BASE_BRANCH}} --force
-   ```
-
-3. **This is safe** because:
-   - Any work you did lives on `agent/*` branches, not on `{{BASE_BRANCH}}`.
-   - If the maintainer merged a PR on your fork that conflicts with upstream, it
-     means they took that work to GitHub themselves (possibly modified). The
-     upstream version already includes their final intent.
-   - The only thing lost is the fork's `{{BASE_BRANCH}}` pointer, not any branch or commit.
-
-4. **After resetting**, continue normally:
-   ```bash
-   git checkout -b agent/my-feature
-   ```
-
 ### Branches
 
 - One branch per issue: `agent/{short-description}`
@@ -181,8 +154,9 @@ Users can prefix their comments with slash commands to control agent behavior:
 ### CI commands
 
 These commands trigger external verification via `sandbox ci-watch` on the host.
-Post them as a comment on a PR — the system runs the test in a clean
-container (no network, no tokens) and posts results back.
+Post them as a **comment on a PR** — the system runs the test in a clean
+container and posts results back. CI commands must be the **first line** of
+the comment (they are slash commands).
 
 - `/test-pr-bug <test-file> <branch>` — Verify a bug fix using time-travel: test must FAIL on base, PASS on PR branch
 - `/test-pr "<test-command>" <branch>` — Run an explicit test command on a branch
@@ -196,13 +170,30 @@ Examples:
 When you see a slash command in the latest comment, follow the command's intent.
 The system enforces tool restrictions — you may find that certain tools are unavailable.
 
+## Standard workflow
+
+For every task, follow this sequence:
+
+1. **Acknowledge** — Post a comment on the issue describing your approach.
+2. **Implement** — Do the work on an `agent/` branch. Commit often.
+3. **Write a test** — Create a test that verifies your change:
+   - **Bug fix:** Write `tests/repro_<issue_number>.py` (or `.sh`). It must exit non-zero when the bug exists, exit 0 when fixed. Verify locally on both branches.
+   - **Feature/change:** Write a test script or identify an existing test command that covers your change.
+   - **Cannot test?** If the change genuinely cannot be tested automatically (documentation-only, config change, visual-only change), explain why in your PR description. Do not skip testing without explanation.
+4. **Test locally** — Run your test on your branch and confirm it passes.
+5. **Push and open a PR** — Push the branch and create the PR with `Fixes #N`.
+6. **Trigger CI** — Post a comment on the PR to run external verification:
+   - Bug fix: `/test-pr-bug tests/repro_<issue_number>.py agent/<branch>`
+   - Other: `/test-pr "<test_command>" agent/<branch>`
+7. **Label and stop** — Add `needs-review` to the issue. You are done. Do not poll for CI results, review comments, or approval. The system will invoke you again when there is new activity.
+
 ## Behavioral guidelines
 
-1. **Always respond first.** When you see a new issue or new comment, post a comment acknowledging it before starting work. Propose your approach for non-trivial changes.
-2. **Don't start large changes without confirmation.** Describe what you plan to do and wait for the human to agree.
-3. **Use labels** to signal status: `in-progress` when working, `needs-review` when you open a PR, `done` when merged.
-4. **Check related PRs** for review comments. If a related PR is listed in your context below, check it for line-level review comments and address any feedback.
-5. **Merge only when approved.** Look for explicit approval ("LGTM", "approved", "merge it", "looks good") before merging a PR. After merging, close the issue and label it `done`.
+1. **Use labels** to signal status: `in-progress` when working, `needs-review` when you open a PR, `done` when merged.
+2. **Stop after submitting a PR.** Once you open a PR, trigger CI, and label the issue `needs-review`, you are done. Do not check PR status — the system will call you back when there is new activity.
+3. **When invoked with review feedback**, check the PR's review comments and address them. Push fixes to the same branch and comment on the PR. Trigger CI again if code changed.
+4. **Merge only when approved.** Look for explicit approval ("LGTM", "approved", "merge it", "looks good") before merging a PR. After merging, close the issue and label it `done`.
+5. **Don't start large changes without confirmation.** Describe what you plan to do and wait for the human to agree.
 6. **Create sub-issues** if you discover bugs or related work while working on something.
 7. **Reference issues** in commit messages and PR descriptions using `#N` or `Fixes #N`.
 8. **Attach images** when your work produces visual output (plots, diagrams, screenshots). Save the file, then use the "Attach an image to a comment" API to upload it to your comment. The human can't see files inside the container — attachments are the only way to share visual results.
