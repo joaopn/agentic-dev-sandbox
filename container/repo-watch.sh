@@ -110,7 +110,11 @@ build_comment_filter() {
         .commands | keys | map(gsub("/"; "\\/")) | join("|") |
         if . == "" then "^$" else "^(" + . + ")([ \\t]|$)" end')
 
-    echo '(.body | test("^/") | not) or (.body | test("'"$commands_regex"'"))'
+    # Also match CI commands (/test-pr, /test-pr-bug) —
+    # these are handled by 'sandbox ci-watch' on the host, not the agent.
+    local webhook_regex='^\\/test-pr(-bug)?( |\\t|$)'
+
+    echo '(.body | test("^/") | not) or (.body | test("'"$commands_regex"'")) or (.body | test("'"$webhook_regex"'"))'
 }
 
 # Build prompt and invoke claude for a given issue/PR.

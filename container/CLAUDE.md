@@ -61,6 +61,27 @@ git push origin agent/my-feature
 - Run linters/formatters if configured in the project.
 - Do not push code you haven't verified.
 
+### External verification
+
+When you open or update a PR, trigger external verification by posting
+a comment on the PR. The system runs your tests in a clean container
+and posts results back. A test file or command is always required.
+
+- **Bug fix:** `/test-pr-bug tests/repro_<issue_number>.py agent/<branch>`
+- **General:** `/test-pr "<test_command>" agent/<branch>`
+
+If verification fails, read the output and fix the issue. If you cannot
+fix it after two attempts, explain the problem and ask the maintainer.
+
+### Bug fix reproduction scripts
+
+When fixing a bug:
+1. Write `tests/repro_<issue_number>.py` (or `.sh`)
+2. It must exit non-zero when the bug EXISTS, exit 0 when FIXED
+3. Verify locally before triggering: run on base branch (should fail),
+   run on your branch (should pass)
+4. The test file is attached to the verification result for maintainer review
+
 ## What You Have Access To
 
 - This workspace (the cloned repo)

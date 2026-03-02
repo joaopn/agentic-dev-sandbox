@@ -178,6 +178,21 @@ Users can prefix their comments with slash commands to control agent behavior:
 - `/refactor` — Improve code quality without changing behavior
 - `/deps` — Audit dependencies for vulnerabilities and outdated packages
 
+### CI commands
+
+These commands trigger external verification via `sandbox ci-watch` on the host.
+Post them as a comment on a PR — the system runs the test in a clean
+container (no network, no tokens) and posts results back.
+
+- `/test-pr-bug <test-file> <branch>` — Verify a bug fix using time-travel: test must FAIL on base, PASS on PR branch
+- `/test-pr "<test-command>" <branch>` — Run an explicit test command on a branch
+
+Examples:
+```
+/test-pr-bug tests/repro_42.py agent/fix-login
+/test-pr "pytest tests/" agent/add-auth
+```
+
 When you see a slash command in the latest comment, follow the command's intent.
 The system enforces tool restrictions — you may find that certain tools are unavailable.
 

@@ -5,6 +5,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -34,6 +35,8 @@ class Config:
         self.default_open_egress = False
         self.default_profile = ""
         self.dns_servers: list[str] = []
+        self.ci_watch_enabled = False
+        self.ci_watch_poll_interval = 5
 
 
 def load_config() -> Config:
@@ -60,6 +63,13 @@ def load_config() -> Config:
     if not dns.strip():
         die("SANDBOX_DNS not set in .env. Example: SANDBOX_DNS=9.9.9.9,149.112.112.112")
     cfg.dns_servers = [s.strip() for s in dns.split(",") if s.strip()]
+
+    # CI Watch settings
+    cfg.ci_watch_enabled = os.environ.get("CI_WATCH_ENABLED", "").lower() in ("true", "1", "yes")
+    try:
+        cfg.ci_watch_poll_interval = int(os.environ.get("CI_WATCH_POLL_INTERVAL", "5"))
+    except ValueError:
+        cfg.ci_watch_poll_interval = 5
 
     # Resolve relative projects_dir to absolute
     if cfg.projects_dir:
@@ -414,7 +424,13 @@ def generate_gitea_token(cfg: Config, gitea_user: str, user_pass: str) -> str:
 
     resp = http_basic_auth_request(base, gitea_user, user_pass, method="POST", body={
         "name": "agent-token",
-        "scopes": ["all"],
+        "scopes": [
+            "write:repository",   # git push/pull
+            "write:issue",        # issues, PRs, comments, labels, merges
+            "read:misc",          # API discovery
+            "read:user",          # user info for auth
+            "read:notification",  # notifications
+        ],
     })
     token = resp.get("sha1") or resp.get("token") or ""
     if not token:
@@ -677,11 +693,24 @@ def cmd_setup(args: argparse.Namespace) -> None:
     else:
         print("Gitea admin token already configured.")
 
+    # CI Watch setup prompt
+    if not cfg.ci_watch_enabled:
+        answer = input("\nEnable CI watch for automated PR testing? [y/N]: ").strip().lower()
+        if answer in ("y", "yes"):
+            _run_ci_watch("setup")
+            # Reload config to pick up new CI watch settings
+            cfg = load_config()
+
+    # Start CI watch if enabled
+    if cfg.ci_watch_enabled:
+        _run_ci_watch("start")
+
     print(f"""
 === Setup Complete ===
 Gitea UI:      http://localhost:{cfg.gitea_port}/explore/repos?sort=newest&type=fork
 Gitea login:   sandbox-admin / {cfg.gitea_admin_password}
 Projects dir:  {cfg.projects_dir}
+CI watch:      {'enabled' if cfg.ci_watch_enabled else 'disabled (run sandbox ci-watch setup)'}
 """)
 
 
@@ -1209,6 +1238,42 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(f"\n  Gitea UI:    http://localhost:{cfg.gitea_port}")
         print(f"  Gitea login: sandbox-admin / {cfg.gitea_admin_password}")
 
+    # CI Watch status
+    print("\n── CI Watch ──")
+    pid = _ci_watch_pid()
+    if pid:
+        print(f"  Status:    running (PID {pid})")
+        print(f"  Poll:      every {cfg.ci_watch_poll_interval}s")
+        print(f"  Log:       {CI_WATCH_LOG_FILE}")
+        if CI_COMMANDS_FILE.exists():
+            try:
+                ci_cfg = json.loads(CI_COMMANDS_FILE.read_text())
+                cmds = ", ".join(ci_cfg.get("commands", {}).keys())
+                print(f"  Commands:  {cmds}")
+            except (json.JSONDecodeError, OSError):
+                pass
+    elif cfg.ci_watch_enabled:
+        print("  Status:    configured but not running")
+        print("  Run 'sandbox ci-watch start' or 'sandbox up' to start.")
+    else:
+        print("  Status:    not configured")
+        print("  Run 'sandbox ci-watch setup' to enable.")
+
+    # Active CI test containers
+    r = subprocess.run(
+        ["docker", "ps", "--filter", "label=sandbox.ci-test=true",
+         "--format", "{{.Names}}\t{{.Status}}\t{{.Label \"sandbox.ci-pr\"}}"],
+        capture_output=True, text=True)
+    ci_containers = [line for line in r.stdout.strip().splitlines() if line]
+    if ci_containers:
+        print("\n── Active CI Tests ──")
+        for line in ci_containers:
+            parts = line.split("\t")
+            name = parts[0] if parts else "?"
+            status = parts[1] if len(parts) > 1 else "?"
+            pr = parts[2] if len(parts) > 2 else ""
+            print(f"  {name:<30s} {status:<20s} {pr}")
+
     print("\n── Agent Containers ──")
     containers = get_agent_containers()
     if not containers:
@@ -1326,6 +1391,9 @@ def cmd_unsetup(args: argparse.Namespace) -> None:
 
     print("\n=== Tearing down sandbox infrastructure ===\n")
 
+    # 0. Stop CI watch
+    _run_ci_watch("stop")
+
     # 1. Destroy all agent containers, volumes, networks, and Gitea users
     if containers:
         print("── Destroying all agent projects ──")
@@ -1361,7 +1429,8 @@ def cmd_unsetup(args: argparse.Namespace) -> None:
 
     # 4. Remove generated tokens from .env
     env_file = SCRIPT_DIR / ".env"
-    cleanup_prefixes = ("GITEA_ADMIN_TOKEN=", "GITEA_ADMIN_PASSWORD=", "GITEA_SECRET_KEY=")
+    cleanup_prefixes = ("GITEA_ADMIN_TOKEN=", "GITEA_ADMIN_PASSWORD=", "GITEA_SECRET_KEY=",
+                        "CI_WATCH_ENABLED=", "CI_WATCH_POLL_INTERVAL=")
     if env_file.exists():
         lines = env_file.read_text().splitlines()
         new_lines = [l for l in lines
@@ -1380,6 +1449,65 @@ Run 'sandbox setup' to start fresh.""")
 def cmd_logs(args: argparse.Namespace) -> None:
     container = f"sandbox-agent-{args.project}"
     os.execvp("docker", ["docker", "logs", "-f", container])
+
+
+# ─── CI Watch (delegated to ci-watch.py) ─────────────────────────────────────
+
+CI_WATCH_PID_FILE = SCRIPT_DIR / "ci-watch.pid"
+CI_WATCH_LOG_FILE = SCRIPT_DIR / "ci-watch.log"
+CI_COMMANDS_FILE = SCRIPT_DIR / "ci-commands.json"
+
+
+def _run_ci_watch(*args: str) -> None:
+    """Run ci-watch.py with the given arguments. Pure passthrough."""
+    script = SCRIPT_DIR / "ci-watch.py"
+    if not script.exists():
+        die("ci-watch.py not found.")
+    r = subprocess.run([sys.executable, str(script), *args])
+    if r.returncode != 0:
+        sys.exit(r.returncode)
+
+
+def _ci_watch_pid() -> int | None:
+    """Read the CI watch PID file. Returns PID or None if not running."""
+    if not CI_WATCH_PID_FILE.exists():
+        return None
+    try:
+        pid = int(CI_WATCH_PID_FILE.read_text().strip())
+        os.kill(pid, 0)  # Check if process exists
+        return pid
+    except (ValueError, ProcessLookupError, PermissionError):
+        CI_WATCH_PID_FILE.unlink(missing_ok=True)
+        return None
+
+
+def cmd_ci_watch(args: argparse.Namespace) -> None:
+    """Route ci-watch subcommands to ci-watch.py."""
+    _run_ci_watch(args.ci_watch_action)
+
+
+# ── sandbox up / down ──
+
+def cmd_up(args: argparse.Namespace) -> None:
+    """Start infrastructure and CI watch (if configured)."""
+    cfg = load_config()
+
+    print("Starting infrastructure...")
+    docker_compose("up", "-d", "gitea", "router")
+    wait_for_gitea(cfg)
+    print("Infrastructure is up.")
+
+    if cfg.ci_watch_enabled:
+        _run_ci_watch("start")
+
+
+def cmd_down(args: argparse.Namespace) -> None:
+    """Stop infrastructure and CI watch."""
+    _run_ci_watch("stop")
+
+    print("Stopping infrastructure...")
+    docker_compose("down")
+    print("Infrastructure is down.")
 
 
 # ─── CLI Parser ───────────────────────────────────────────────────────────────
@@ -1404,6 +1532,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("setup", help="One-time infrastructure setup").set_defaults(func=cmd_setup)
     sub.add_parser("unsetup", help="Tear down all infrastructure, containers, and volumes").set_defaults(func=cmd_unsetup)
+
+    sub.add_parser("up", help="Start infrastructure + CI watch").set_defaults(func=cmd_up)
+    sub.add_parser("down", help="Stop infrastructure + CI watch").set_defaults(func=cmd_down)
+
+    # CI Watch subcommands
+    ci_watch = sub.add_parser("ci-watch", help="Manage CI watch background process")
+    ci_watch_sub = ci_watch.add_subparsers(dest="ci_watch_action", required=True)
+    ci_watch_sub.add_parser("setup", help="Configure CI watch")
+    ci_watch_sub.add_parser("start", help="Start CI watch")
+    ci_watch_sub.add_parser("stop", help="Stop CI watch")
+    ci_watch.set_defaults(func=cmd_ci_watch)
 
     p = sub.add_parser("create", help="Mirror repo and spin up agent container",
                        parents=[container_flags])

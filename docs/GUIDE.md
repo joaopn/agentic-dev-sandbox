@@ -10,6 +10,7 @@
 [◾ Fetch Sandbox](#-fetch-sandbox)
 [◾ Reviewer](#-reviewer)
 [◾ Repo Watch](#-repo-watch)
+[◾ CI Watch](#-ci-watch)
 [◾ FAQ](#-faq)
 
 ## ◾ After a Reboot
@@ -273,8 +274,15 @@ Users can prefix issue bodies or comments with slash commands to control agent b
 | `/review` | Review the open PR and post findings |
 | `/explain <topic>` | Explain a file, concept, or codebase area |
 | `/test` | Run the test suite and report results |
+| `/search <topic>` | Research a topic using web search, no code changes |
+| `/security` | Security audit for vulnerabilities in code |
+| `/fix` | Diagnose and fix a specific bug or error |
+| `/refactor` | Improve code quality without changing behavior |
+| `/deps` | Audit dependencies for vulnerabilities and outdated packages |
 
 Each command can specify a `task_prefix` (prepended to the prompt) and `flags` (passed to the agent binary, e.g. `--disallowedTools`). To add or modify commands, edit `container/issue-commands.json`.
+
+There are also **CI commands** (`/test-pr`, `/test-pr-bug`) that trigger external verification — see [CI Watch](#-ci-watch).
 
 ### Configuration
 
@@ -290,6 +298,168 @@ Set as environment variables when launching repo-watch:
 ```bash
 POLL_INTERVAL=60 REPO_WATCH_MAX_TURNS=50 REPO_WATCH_TIMEOUT=15m ./repo-watch.sh
 ```
+
+## ◾ CI Watch
+
+External PR verification that neither the agent nor a compromised container can tamper with. Post a command on a PR, the host runs the tests in a sandboxed container (no network, no tokens), and posts results back as `sandbox-admin`.
+
+### Why
+
+The SWE agent lies. It claims tests pass without running them, writes vacuous tests, and submits broken code. Internal hooks (git hooks, Claude hooks) run inside the container and can be bypassed. CI watch runs on the host — the agent can't modify, disable, or fake the results.
+
+### How it works
+
+```
+Agent or human posts PR comment:  /test-pr-bug tests/repro_42.py agent/fix-login
+                                              │
+                                              ▼
+                             sandbox ci-watch polls Gitea API, finds command
+                                              │
+                                              ▼
+                             Host clones repo to temp dir (using admin token)
+                                              │
+                                              ▼
+                            docker run --rm --network=none -v /tmp/ci-xyz:/repo:ro
+                              ├─ No network, no tokens, read-only repo
+                              ├─ Run test per command type (see below)
+                              └─ Host captures output, posts results as sandbox-admin
+                                              │
+                                              ▼
+                            repo-watch detects new PR comment on next poll
+                              ├─ Passed → agent proceeds
+                              └─ Failed → agent fixes and re-triggers
+```
+
+### Commands
+
+Commands are defined in `ci-commands.json` and can be customized. The default commands are:
+
+#### `/test-pr-bug <test-file> <branch>`
+
+Verifies a bug fix using the "time-travel" method:
+
+1. Clone repo, checkout `<branch>`, record commit SHA
+2. Save `<test-file>` from `<branch>`
+3. Checkout base branch, run the test — **must exit non-zero** (bug exists on base)
+4. Checkout `<branch>`, run the test — **must exit 0** (fix works)
+
+The test file is uploaded as a downloadable Gitea attachment on the result comment for human review.
+
+```
+/test-pr-bug tests/repro_42.py agent/fix-login
+```
+
+#### `/test-pr "<test-command>" <branch>`
+
+Runs an explicit test command on a branch:
+
+1. Clone repo, checkout `<branch>`, record commit SHA
+2. Run `<test-command>` — **must exit 0**
+
+```
+/test-pr "pytest tests/" agent/add-auth
+/test-pr "python -m unittest discover" agent/refactor-db
+```
+
+#### Custom commands
+
+Add custom CI commands by editing `ci-commands.json`. For example, to add a `/lint` command:
+
+```json
+"/lint": {
+  "description": "Run linter on the PR branch",
+  "type": "fixed-command",
+  "command": "ruff check .",
+  "usage": "/lint <branch>",
+  "args": { "branch": {"pattern": "^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$"} },
+  "timeout": 120, "memory": "1g"
+}
+```
+
+### Result format
+
+Results are posted as a PR comment by `sandbox-admin`:
+
+```
+## CI: tests/repro_42.py
+
+**Tested commit:** `abc1234`
+**Status:** PASS
+
+| Step | Result |
+|------|--------|
+| Repro fails on base (`main`) | pass (exit 1) |
+| Repro passes on PR (`agent/fix`) | pass (exit 0) |
+```
+
+On failure, the full test output is included (truncated to 50 lines). If the PR HEAD has moved since the test ran, a stale warning is shown. The full log is attached as a downloadable file.
+
+### Setup
+
+```bash
+sandbox ci-watch setup    # Configure (prompted during 'sandbox setup')
+sandbox up                # Start infrastructure + CI watch
+sandbox ci-watch stop     # Stop CI watch
+sandbox status            # Check CI watch status + active tests
+```
+
+CI watch is a background Python process managed by `sandbox.py`. It starts with `sandbox up` and stops with `sandbox down`.
+
+### Configuration
+
+| Variable | Effect | Default |
+|---|---|---|
+| `CI_WATCH_ENABLED` | Enable CI watch background process | `false` |
+| `CI_WATCH_POLL_INTERVAL` | How often to poll Gitea for commands (seconds) | `5` |
+
+Set in `.env`. CI watch reads `GITEA_ADMIN_TOKEN` from `.env` on the host — this token never enters any container.
+
+### Clean room verification
+
+Verification runs in a disposable container with no shared state with the agent. This follows CI/CD industry practice (GitHub Actions, GitLab CI):
+
+- `docker run --rm` with the project's agent image (same base tools: conda, node, git, etc.)
+- **Pre-cloned by host** — the host process clones the repo to a temp directory and bind-mounts it
+- **No shared volume** — the agent's `/home/agent` volume is never mounted
+- **Network: none** — the test container has no network access at all
+- **No tokens** — no Gitea token, no Docker socket, no credentials of any kind
+- **Resource limits:** 2 GB memory, 2 CPUs, 10-minute timeout
+- **cap-drop ALL** — minimal Linux capabilities
+
+If the test needs dependencies, they must already be in the agent image (the container has no network to install them).
+
+### Security model
+
+**No Docker socket in containers.** Unlike the previous webhook handler, CI watch runs entirely on the host. No container has Docker socket access.
+
+**No tokens in containers.** The admin token stays on the host. The repo is pre-cloned by the host and bind-mounted — the test container never sees any credentials. Even `git remote -v` shows a local path, not a URL with a token.
+
+**No network in test containers.** Test containers run with `--network=none`. A malicious test cannot download malware, exfiltrate data, or phone home.
+
+**Unforgeable results.** Results are posted as `sandbox-admin` using the admin token. The agent can only post as `agent-{project}`. The comment author is the trust signal.
+
+**SHA pinning.** CI watch records the tested commit SHA. If the PR HEAD has moved since (e.g., the agent force-pushed), the result is marked stale.
+
+**Input validation.** Branch names must match `^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$`. Test file paths must match `^[a-zA-Z0-9][a-zA-Z0-9/_.-]*\.(py|sh)$` with no `..`. Both must exist in the repo (verified via Gitea API before container spin-up). No `shell=True` in subprocess calls.
+
+**Rate limiting.** Max 10 CI runs per PR per hour (configurable in `ci-commands.json`).
+
+**Rate limiting.** Max 10 verification runs per PR per hour.
+
+### Agent instructions
+
+The agent is *instructed* to trigger verification (via `CLAUDE.md`) but not forced. The design is "instruct, don't force" — if the agent skips verification, the missing checkmark is visible to the human on the PR. The agent can also be told to trigger verification via issue comments.
+
+The agent's `CLAUDE.md` tells it to:
+- Write `tests/repro_<issue_number>.py` for bug fixes (exit non-zero when bug exists, exit 0 when fixed)
+- Post `/test-pr-bug` or `/test-pr` on the PR after pushing
+- Read verification results and fix failures (up to two attempts before asking the maintainer)
+
+### Limitations
+
+- **Vacuous tests.** The agent writes the test, so it can write one that always passes. The test file is attached for human review — this is a mitigation, not a prevention.
+- **Agent skips verification.** If the agent doesn't post the command, verification doesn't run. The missing result is visible to the human.
+- **Sequential execution.** CI watch processes one verification at a time. Concurrent test requests queue up in the polling loop.
 
 ## ◾ FAQ
 

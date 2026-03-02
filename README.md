@@ -75,7 +75,9 @@ The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR
   <img src="docs/img/pirate.png" width="600" alt="Repo Watch example">
 </p>
 
-Prefix an issue body or comment with a slash command (`/plan`, `/explain`, `/review`, `/test`) to add predefined prompts and restrict the agent's behavior: e.g. `/plan` to use a planning prompt and disable file writing. Commands are defined in `container/issue-commands.json` and can be customized. 
+Prefix an issue body or comment with a slash command (`/plan`, `/explain`, `/review`, `/test`, etc.) to add predefined prompts and restrict the agent's behavior: e.g. `/plan` to use a planning prompt and disable file writing. Commands are defined in `container/issue-commands.json` and can be customized.
+
+**[Optional] CI Watch** — Post `/test-pr` or `/test-pr-bug` on a PR to trigger external verification. A host-side polling process (`sandbox ci-watch`) runs the tests in a clean container (no network, no tokens) and posts results back as `sandbox-admin`. Commands are defined in `ci-commands.json` and can be customized. See [CI Watch](docs/GUIDE.md#-ci-watch) in the guide.
 
 
 To use:
@@ -181,7 +183,8 @@ Create/recreate options:
 ```
 agentic-dev-sandbox/
 ├── sandbox.py                    Main CLI (Python 3, stdlib only)
-├── docker-compose.yml            Gitea + router
+├── ci-commands.json              CI command definitions (extensible)
+├── docker-compose.yml            Gitea + router infrastructure
 ├── review-config.yaml            Security review prompt and tunables
 ├── .env                          Config + secrets (gitignored)
 ├── .env.example                  Template
