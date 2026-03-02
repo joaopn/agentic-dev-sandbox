@@ -30,8 +30,10 @@ from sandbox import (
     SCRIPT_DIR,
     Config,
     die,
+    gen_password,
     gitea_api,
     gitea_api_ok,
+    http_basic_auth_request,
     load_config,
     update_env_key,
 )
@@ -428,17 +430,28 @@ def _format_test_result(result: dict, test_command: str, pr_branch: str) -> str:
 # ─── Gitea helpers ────────────────────────────────────────────────────────────
 
 
+def _ci_token(cfg: Config) -> str:
+    """Return the CI watch Gitea token, falling back to admin token."""
+    return cfg.ci_watch_gitea_token or cfg.gitea_admin_token
+
+
 def _gitea_post_comment(cfg: Config, repo_path: str,
                         issue_number: int, body: str) -> dict:
-    """Post a comment on a Gitea PR. Returns the comment object."""
-    return gitea_api(cfg, "POST",
-                     f"/repos/{repo_path}/issues/{issue_number}/comments",
-                     {"body": body})
+    """Post a comment on a Gitea PR as sandbox-ci. Returns the comment object."""
+    url = f"http://localhost:{cfg.gitea_port}/api/v1/repos/{repo_path}/issues/{issue_number}/comments"
+    data = json.dumps({"body": body}).encode()
+    req = Request(url, data=data, method="POST", headers={
+        "Authorization": f"token {_ci_token(cfg)}",
+        "Content-Type": "application/json",
+    })
+    with urlopen(req, timeout=30) as resp:
+        content = resp.read().decode()
+        return json.loads(content) if content.strip() else {}
 
 
 def _gitea_attach_file(cfg: Config, repo_path: str,
                        comment_id: int, filepath: str, filename: str) -> None:
-    """Attach a file to a Gitea comment."""
+    """Attach a file to a Gitea comment as sandbox-ci."""
     url = f"http://localhost:{cfg.gitea_port}/api/v1/repos/{repo_path}/issues/comments/{comment_id}/assets"
     boundary = "----CIWatchBoundary"
     file_content = Path(filepath).read_bytes()
@@ -453,7 +466,7 @@ def _gitea_attach_file(cfg: Config, repo_path: str,
     body_bytes = b"".join(body_parts)
 
     req = Request(url, data=body_bytes, method="POST", headers={
-        "Authorization": f"token {cfg.gitea_admin_token}",
+        "Authorization": f"token {_ci_token(cfg)}",
         "Content-Type": f"multipart/form-data; boundary={boundary}",
     })
     urlopen(req, timeout=30)
@@ -698,8 +711,101 @@ def ci_watch_pid() -> int | None:
         return None
 
 
+CI_USER = "sandbox-ci"
+
+
+def _ensure_ci_user(cfg: Config) -> str:
+    """Create the sandbox-ci Gitea user and return an API token for it.
+
+    Idempotent: if the user already exists, resets its password and
+    regenerates the token.
+    """
+    user_pass = gen_password()
+
+    if not gitea_api_ok(cfg, "GET", f"/users/{CI_USER}"):
+        print(f"Creating Gitea user: {CI_USER}...")
+        gitea_api(cfg, "POST", "/admin/users", {
+            "username": CI_USER,
+            "password": user_pass,
+            "email": f"{CI_USER}@sandbox.local",
+            "must_change_password": False,
+            "visibility": "public",
+        })
+    else:
+        # User exists — reset password so we can generate a new token
+        gitea_api(cfg, "PATCH", f"/admin/users/{CI_USER}", {
+            "login_name": CI_USER,
+            "source_id": 0,
+            "password": user_pass,
+            "must_change_password": False,
+        })
+
+    # Generate token with scopes needed for posting CI results
+    base = f"http://localhost:{cfg.gitea_port}/api/v1/users/{CI_USER}/tokens"
+    try:
+        existing = http_basic_auth_request(base, CI_USER, user_pass)
+        if isinstance(existing, list):
+            for tok in existing:
+                if "id" in tok:
+                    http_basic_auth_request(
+                        f"{base}/{tok['id']}", CI_USER, user_pass, method="DELETE")
+    except Exception:
+        pass
+
+    resp = http_basic_auth_request(base, CI_USER, user_pass, method="POST", body={
+        "name": "ci-watch-token",
+        "scopes": [
+            "write:issue",        # post comments, attach files
+            "read:repository",    # read PRs, branches, file contents
+            "read:user",          # auth
+        ],
+    })
+    token = resp.get("sha1") or resp.get("token") or ""
+    if not token:
+        die(f"Failed to generate Gitea token for {CI_USER}: {resp}")
+
+    # Add sandbox-ci as collaborator on all existing agent repos
+    _grant_ci_access_all(cfg)
+
+    return token
+
+
+def _grant_ci_access_all(cfg: Config) -> None:
+    """Add sandbox-ci as read collaborator on all agent repos."""
+    try:
+        users = gitea_api(cfg, "GET", "/admin/users?limit=50")
+    except RuntimeError:
+        return
+    if not isinstance(users, list):
+        return
+
+    for user in users:
+        if not isinstance(user, dict):
+            continue
+        login = user.get("login", "")
+        if not login.startswith("agent-"):
+            continue
+        try:
+            repos = gitea_api(cfg, "GET", f"/repos/search?owner={login}&limit=50")
+        except RuntimeError:
+            continue
+        if isinstance(repos, dict):
+            repos = repos.get("data", [])
+        if not isinstance(repos, list):
+            continue
+        for repo in repos:
+            if not isinstance(repo, dict):
+                continue
+            repo_full = repo.get("full_name", "")
+            if repo_full:
+                gitea_api_ok(cfg, "PUT",
+                             f"/repos/{repo_full}/collaborators/{CI_USER}",
+                             {"permission": "read"})
+
+
 def cmd_setup() -> None:
     """Interactive CI watch configuration."""
+    cfg = load_config()
     print("=== CI Watch Setup ===\n")
 
     interval = input("Poll interval in seconds [5]: ").strip() or "5"
@@ -708,10 +814,15 @@ def cmd_setup() -> None:
     except ValueError:
         die(f"Invalid interval: {interval}")
 
+    # Create sandbox-ci Gitea user and token
+    token = _ensure_ci_user(cfg)
+
     update_env_key("CI_WATCH_ENABLED", "true")
     update_env_key("CI_WATCH_POLL_INTERVAL", interval)
+    update_env_key("CI_WATCH_GITEA_TOKEN", token)
 
     print(f"\nCI watch enabled (poll every {interval}s).")
+    print(f"CI results will be posted by '{CI_USER}'.")
     print("Commands are defined in ci-commands.json.")
     print("Run 'sandbox ci-watch start' or 'sandbox up' to start.")
 

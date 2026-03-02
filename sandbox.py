@@ -37,6 +37,7 @@ class Config:
         self.dns_servers: list[str] = []
         self.ci_watch_enabled = False
         self.ci_watch_poll_interval = 5
+        self.ci_watch_gitea_token = ""
 
 
 def load_config() -> Config:
@@ -70,6 +71,7 @@ def load_config() -> Config:
         cfg.ci_watch_poll_interval = int(os.environ.get("CI_WATCH_POLL_INTERVAL", "5"))
     except ValueError:
         cfg.ci_watch_poll_interval = 5
+    cfg.ci_watch_gitea_token = os.environ.get("CI_WATCH_GITEA_TOKEN", "")
 
     # Resolve relative projects_dir to absolute
     if cfg.projects_dir:
@@ -789,6 +791,10 @@ def cmd_create(args: argparse.Namespace) -> None:
                  {**repo_features, "has_issues": False})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-admin",
                  {"permission": "admin"})
+    # Grant CI watch read access if configured (so sandbox-ci can post PR comments)
+    if cfg.ci_watch_gitea_token:
+        gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-ci",
+                     {"permission": "read"})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/subscription")
 
     # Determine base branch: --branch flag → Gitea mirror's default_branch
@@ -1430,7 +1436,7 @@ def cmd_unsetup(args: argparse.Namespace) -> None:
     # 4. Remove generated tokens from .env
     env_file = SCRIPT_DIR / ".env"
     cleanup_prefixes = ("GITEA_ADMIN_TOKEN=", "GITEA_ADMIN_PASSWORD=", "GITEA_SECRET_KEY=",
-                        "CI_WATCH_ENABLED=", "CI_WATCH_POLL_INTERVAL=")
+                        "CI_WATCH_ENABLED=", "CI_WATCH_POLL_INTERVAL=", "CI_WATCH_GITEA_TOKEN=")
     if env_file.exists():
         lines = env_file.read_text().splitlines()
         new_lines = [l for l in lines
