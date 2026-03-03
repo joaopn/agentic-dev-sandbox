@@ -150,6 +150,21 @@ for tmpl_file in ~/CLAUDE.md ~/repo-watch-prompt.md; do
     fi
 done
 
+# --- Render conditional blocks ({{#CI_WATCH}} / {{^CI_WATCH}} / {{/CI_WATCH}}) ---
+for tmpl_file in ~/CLAUDE.md ~/repo-watch-prompt.md; do
+    [[ -f "${tmpl_file}" ]] || continue
+    grep -q '{{#CI_WATCH}}\|{{^CI_WATCH}}' "${tmpl_file}" 2>/dev/null || continue
+    if [[ "${CI_WATCH_ENABLED:-}" == "true" ]]; then
+        # Keep {{#CI_WATCH}} content, remove {{^CI_WATCH}} content
+        sed -i '/{{^CI_WATCH}}/,/{{\/CI_WATCH}}/d' "${tmpl_file}"
+        sed -i '/{{#CI_WATCH}}/d; /{{\/CI_WATCH}}/d' "${tmpl_file}"
+    else
+        # Remove {{#CI_WATCH}} content, keep {{^CI_WATCH}} content
+        sed -i '/{{#CI_WATCH}}/,/{{\/CI_WATCH}}/d' "${tmpl_file}"
+        sed -i '/{{^CI_WATCH}}/d; /{{\/CI_WATCH}}/d' "${tmpl_file}"
+    fi
+done
+
 echo "=== Agent container ready ==="
 echo "Repo: ${REPO_DIR}"
 if [[ -n "${EFFECTIVE_BRANCH}" ]]; then

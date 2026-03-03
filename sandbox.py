@@ -345,6 +345,7 @@ def build_agent_docker_args(
     gpus: str = "",
     claude_yolo: bool = False,
     docker: bool = False,
+    ci_watch: bool = False,
 ) -> list[str]:
     """Build the docker run argument list. Shared by create and recreate."""
     dns_args = []
@@ -393,6 +394,8 @@ def build_agent_docker_args(
         args += [f"--gpus={gpus}"]
     if claude_yolo:
         args += ["-e", "CLAUDE_YOLO=true"]
+    if ci_watch:
+        args += ["-e", "CI_WATCH_ENABLED=true"]
     args.append(image)
     return args
 
@@ -871,7 +874,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=base_branch or "", cpus=args.cpus or "",
         gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
-        docker=args.docker,
+        docker=args.docker, ci_watch=cfg.ci_watch_enabled,
     )
     run_check(["docker", *docker_args])
 
@@ -1061,9 +1064,14 @@ def cmd_set_branch(args: argparse.Namespace) -> None:
 
     # 2. Re-render templates from saved .template files
     print(f"Updating agent instructions to use '{branch}' as base branch...")
+    # Check if CI_WATCH_ENABLED is set in the container
+    r = run(["docker", "exec", container_name, "bash", "-c",
+             "echo ${CI_WATCH_ENABLED:-}"], capture_output=True, text=True)
+    ci_watch_in_container = r.stdout.strip() == "true"
     for filename in ["CLAUDE.md", "repo-watch-prompt.md"]:
         template = f"{home}/.{filename}.template"
         target = f"{home}/{filename}"
+        # Re-render {{BASE_BRANCH}}
         render_cmd = (
             f"if [ -f '{template}' ]; then "
             f"cp '{template}' '{target}' && "
@@ -1071,6 +1079,19 @@ def cmd_set_branch(args: argparse.Namespace) -> None:
             f"fi"
         )
         run(["docker", "exec", container_name, "bash", "-c", render_cmd],
+            capture_output=True)
+        # Re-render {{#CI_WATCH}} / {{^CI_WATCH}} conditionals
+        if ci_watch_in_container:
+            ci_cmd = (
+                r"sed -i '/{{^CI_WATCH}}/,/{{\/CI_WATCH}}/d' '" + target + "' && "
+                r"sed -i '/{{#CI_WATCH}}/d; /{{\/CI_WATCH}}/d' '" + target + "'"
+            )
+        else:
+            ci_cmd = (
+                r"sed -i '/{{#CI_WATCH}}/,/{{\/CI_WATCH}}/d' '" + target + "' && "
+                r"sed -i '/{{^CI_WATCH}}/d; /{{\/CI_WATCH}}/d' '" + target + "'"
+            )
+        run(["docker", "exec", container_name, "bash", "-c", ci_cmd],
             capture_output=True)
 
     # 3. Update env var in /etc/profile.d/sandbox-env.sh
@@ -1203,7 +1224,7 @@ def cmd_recreate(args: argparse.Namespace) -> None:
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
         gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
-        docker=args.docker,
+        docker=args.docker, ci_watch=cfg.ci_watch_enabled,
     )
 
     print("Starting new container...")
