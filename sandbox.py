@@ -1459,8 +1459,9 @@ def cmd_logs(args: argparse.Namespace) -> None:
 
 # ─── CI Watch (delegated to ci-watch.py) ─────────────────────────────────────
 
-CI_WATCH_PID_FILE = SCRIPT_DIR / "ci-watch.pid"
-CI_WATCH_LOG_FILE = SCRIPT_DIR / "ci-watch.log"
+CI_WATCH_DIR = SCRIPT_DIR / ".ci-watch"
+CI_WATCH_PID_FILE = CI_WATCH_DIR / "ci-watch.pid"
+CI_WATCH_LOG_FILE = CI_WATCH_DIR / "ci-watch.log"
 CI_COMMANDS_FILE = SCRIPT_DIR / "ci-commands.json"
 
 

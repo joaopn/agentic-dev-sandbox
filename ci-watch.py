@@ -40,9 +40,10 @@ from sandbox import (
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-CI_LOGS_DIR = SCRIPT_DIR / "ci-logs"
-CI_WATCH_PID_FILE = SCRIPT_DIR / "ci-watch.pid"
-CI_WATCH_LOG_FILE = SCRIPT_DIR / "ci-watch.log"
+CI_WATCH_DIR = SCRIPT_DIR / ".ci-watch"
+CI_LOGS_DIR = CI_WATCH_DIR / "logs"
+CI_WATCH_PID_FILE = CI_WATCH_DIR / "ci-watch.pid"
+CI_WATCH_LOG_FILE = CI_WATCH_DIR / "ci-watch.log"
 CI_COMMANDS_FILE = SCRIPT_DIR / "ci-commands.json"
 
 # Validation patterns
@@ -450,8 +451,8 @@ def _gitea_post_comment(cfg: Config, repo_path: str,
 
 
 def _gitea_attach_file(cfg: Config, repo_path: str,
-                       comment_id: int, filepath: str, filename: str) -> None:
-    """Attach a file to a Gitea comment as sandbox-ci."""
+                       comment_id: int, filepath: str, filename: str) -> dict:
+    """Attach a file to a Gitea comment as sandbox-ci. Returns the asset object."""
     url = f"http://localhost:{cfg.gitea_port}/api/v1/repos/{repo_path}/issues/comments/{comment_id}/assets"
     boundary = "----CIWatchBoundary"
     file_content = Path(filepath).read_bytes()
@@ -468,6 +469,20 @@ def _gitea_attach_file(cfg: Config, repo_path: str,
     req = Request(url, data=body_bytes, method="POST", headers={
         "Authorization": f"token {_ci_token(cfg)}",
         "Content-Type": f"multipart/form-data; boundary={boundary}",
+    })
+    with urlopen(req, timeout=30) as resp:
+        content = resp.read().decode()
+        return json.loads(content) if content.strip() else {}
+
+
+def _gitea_patch_comment(cfg: Config, repo_path: str,
+                         comment_id: int, body: str) -> None:
+    """Update a comment's body on Gitea."""
+    url = f"http://localhost:{cfg.gitea_port}/api/v1/repos/{repo_path}/issues/comments/{comment_id}"
+    data = json.dumps({"body": body}).encode()
+    req = Request(url, data=data, method="PATCH", headers={
+        "Authorization": f"token {_ci_token(cfg)}",
+        "Content-Type": "application/json",
     })
     urlopen(req, timeout=30)
 
@@ -679,11 +694,17 @@ def _ci_watch_execute(cfg: Config, repo_full: str, pr_number: int,
         comment = _gitea_post_comment(cfg, repo_full, pr_number, body)
         comment_id = comment.get("id", 0) if isinstance(comment, dict) else 0
 
-        # Attach full log
+        # Attach full log and link it in the comment
         if comment_id and log_file.exists():
             try:
-                _gitea_attach_file(cfg, repo_full, comment_id,
-                                   str(log_file), f"ci-{job_id}.log")
+                asset = _gitea_attach_file(cfg, repo_full, comment_id,
+                                           str(log_file), f"ci-{job_id}.log")
+                asset_uuid = asset.get("uuid", "")
+                asset_name = asset.get("name", "")
+                if asset_uuid and asset_name:
+                    body += f"\n\n[{asset_name}](/attachments/{asset_uuid})"
+                    _gitea_patch_comment(cfg, repo_full, comment_id, body)
+                    log_file.unlink(missing_ok=True)
             except Exception as e:
                 _ci_log(f"  Warning: could not attach log: {e}")
 
@@ -800,7 +821,7 @@ def _grant_ci_access_all(cfg: Config) -> None:
             if repo_full:
                 gitea_api_ok(cfg, "PUT",
                              f"/repos/{repo_full}/collaborators/{CI_USER}",
-                             {"permission": "read"})
+                             {"permission": "write"})
 
 
 def cmd_setup() -> None:
@@ -838,6 +859,7 @@ def cmd_start() -> None:
         die("ci-commands.json not found. Cannot start CI watch.")
 
     # Start background process
+    CI_WATCH_DIR.mkdir(parents=True, exist_ok=True)
     log_fd = open(CI_WATCH_LOG_FILE, "a")
     proc = subprocess.Popen(
         [sys.executable, str(SCRIPT_DIR / "ci-watch.py"), "_loop"],
