@@ -73,8 +73,8 @@ The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR
 
 
 <div style="display: flex; gap: 10px;">
-  <img src="docs/img/repo-watch1.png" width="50%" />
-  <img src="docs/img/repo-watch2.png" width="50%" />
+  <img src="docs/img/repo-watch1.png" width="48%" />
+  <img src="docs/img/repo-watch2.png" width="48%" />
 </div>
 
 
