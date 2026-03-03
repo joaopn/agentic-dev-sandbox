@@ -231,7 +231,7 @@ One issue is processed per cycle. The script blocks the terminal — use byobu F
 ### Usage
 
 ```bash
-./repo-watch.sh                        # poll every 30s (default)
+./repo-watch.sh                        # poll every 10s (default)
 POLL_INTERVAL=60 ./repo-watch.sh       # poll every 60s
 ```
 
@@ -288,7 +288,7 @@ There are also **CI commands** (`/test-pr`, `/test-pr-bug`) that trigger externa
 
 | Variable | Effect | Default |
 |---|---|---|
-| `POLL_INTERVAL` | Seconds between polling cycles | `30` |
+| `POLL_INTERVAL` | Seconds between polling cycles | `10` |
 | `MAX_RETRIES` | Consecutive failures before skipping an issue | `3` |
 | `REPO_WATCH_MAX_TURNS` | Max agentic iterations per invocation | unlimited |
 | `REPO_WATCH_MAX_BUDGET_USD` | Cost ceiling per invocation (USD) | unlimited |

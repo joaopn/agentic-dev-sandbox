@@ -7,7 +7,7 @@
 # open a PR, merge, etc.
 #
 # Usage:
-#   ./repo-watch.sh              # poll every 30s (default)
+#   ./repo-watch.sh              # poll every 10s (default)
 #   POLL_INTERVAL=60 ./repo-watch.sh   # poll every 60s
 #
 # Safety limits (env vars, all optional):
@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-POLL_INTERVAL="${POLL_INTERVAL:-30}"
+POLL_INTERVAL="${POLL_INTERVAL:-10}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 REPO_DIR="${HOME}/${REPO_NAME}"
 API="${GITEA_URL}/api/v1"
