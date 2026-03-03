@@ -78,16 +78,16 @@
     }
   },
   "ci_commands": {
-    "_comment": "These commands are handled by 'sandbox ci-watch' on the host, not the agent. Post them as PR comments. Defined in ci-commands.json.",
-    "/test-pr-bug": {
-      "description": "Verify a bug fix: test must FAIL on base branch, PASS on PR branch",
-      "usage": "/test-pr-bug <test-file> <branch>",
-      "example": "/test-pr-bug tests/repro_42.py agent/fix-login"
-    },
+    "_comment": "These commands are handled by 'sandbox ci-watch' on the host, not the agent. Post them as PR comments.",
     "/test-pr": {
       "description": "Run a test command on a branch in a clean container",
-      "usage": "/test-pr \"<test-command>\" <branch>",
-      "example": "/test-pr \"pytest tests/\" agent/add-auth"
+      "usage": "/test-pr \"<command>\" <branch> [--setup \"<setup-command>\"]",
+      "example": "/test-pr \"pytest tests/\" agent/add-auth --setup \"pip install -r requirements.txt\""
+    },
+    "/test-pr-bug": {
+      "description": "Verify a bug fix: command must FAIL on base branch, PASS on PR branch",
+      "usage": "/test-pr-bug \"<command>\" <branch> [--setup \"<setup-command>\"]",
+      "example": "/test-pr-bug \"python tests/repro_42.py\" agent/fix-login"
     }
   }
 }

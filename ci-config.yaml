@@ -1,0 +1,12 @@
+# CI watch configuration.
+# Resource limits and rate limiting for CI test containers.
+# Used by ci-watch.py when running tests triggered via PR comments.
+
+# Container resource limits.
+timeout: 600
+memory: 2g
+cpus: 2
+
+# Rate limiting: max CI runs per PR within the time window (seconds).
+rate_limit: 10
+rate_window: 3600

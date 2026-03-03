@@ -514,8 +514,8 @@ while true; do
             [[ -z "$last_author" ]] && last_author="$author"
         fi
 
-        # Skip if agent spoke last (waiting for human)
-        if [[ "$last_author" == "$GITEA_USER" ]]; then
+        # Skip if agent or CI bot spoke last (waiting for human)
+        if [[ "$last_author" == "$GITEA_USER" || "$last_author" == "sandbox-ci" ]]; then
             continue
         fi
 

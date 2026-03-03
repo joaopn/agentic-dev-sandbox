@@ -44,87 +44,75 @@ CI_WATCH_DIR = SCRIPT_DIR / ".ci-watch"
 CI_LOGS_DIR = CI_WATCH_DIR / "logs"
 CI_WATCH_PID_FILE = CI_WATCH_DIR / "ci-watch.pid"
 CI_WATCH_LOG_FILE = CI_WATCH_DIR / "ci-watch.log"
-CI_COMMANDS_FILE = SCRIPT_DIR / "ci-commands.json"
+CI_CONFIG_FILE = SCRIPT_DIR / "ci-config.yaml"
 
-# Validation patterns
+# Validation patterns (hardcoded — these are security boundaries, not config)
 _BRANCH_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$")
-_FILE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9/_.-]*\.(py|sh)$")
+_FILE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$")
+
+# Command patterns (hardcoded — command types are code, not config)
+# Optional --setup "..." flag can appear anywhere after the required args
+_SETUP_RE = re.compile(r'--setup\s+"([^"]+)"')
+_CMD_PATTERNS: list[tuple[str, str, re.Pattern]] = [
+    # /test-pr "command" branch [--setup "..."]
+    ("/test-pr", "command",
+     re.compile(r'^/test-pr\s+"([^"]+)"\s+(\S+)', re.MULTILINE)),
+    # /test-pr-bug "command" branch [--setup "..."]
+    ("/test-pr-bug", "bug-verification",
+     re.compile(r'^/test-pr-bug\s+"([^"]+)"\s+(\S+)', re.MULTILINE)),
+]
+
+
+# ─── CI config loading ───────────────────────────────────────────────────────
+
+
+def _load_ci_config() -> dict:
+    """Load CI configuration from ci-config.yaml."""
+    if not CI_CONFIG_FILE.exists():
+        return {}
+    config: dict = {}
+    for line in CI_CONFIG_FILE.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if ":" in stripped:
+            key, _, value = stripped.partition(":")
+            config[key.strip()] = value.strip()
+    return config
 
 
 # ─── CI command parsing ──────────────────────────────────────────────────────
 
 
-def _load_ci_commands() -> dict:
-    """Load CI command definitions from ci-commands.json."""
-    if not CI_COMMANDS_FILE.exists():
-        die(f"ci-commands.json not found at {CI_COMMANDS_FILE}")
-    return json.loads(CI_COMMANDS_FILE.read_text())
-
-
-def _build_ci_command_patterns(ci_config: dict) -> list[tuple[str, re.Pattern, dict]]:
-    """Build regex patterns from ci-commands.json for matching PR comments.
-
-    Returns list of (command_name, regex_pattern, command_config).
-    """
-    patterns = []
-    for cmd_name, cmd_cfg in ci_config.get("commands", {}).items():
-        cmd_type = cmd_cfg.get("type", "")
-        if cmd_type == "bug-verification":
-            # /test-pr-bug <test-file> <branch>
-            pat = re.compile(rf"^{re.escape(cmd_name)}\s+(\S+)\s+(\S+)\s*$", re.MULTILINE)
-        elif cmd_type == "command":
-            # /test-pr "<command>" <branch>
-            pat = re.compile(rf'^{re.escape(cmd_name)}\s+"([^"]+)"\s+(\S+)\s*$', re.MULTILINE)
-        elif cmd_type == "fixed-command":
-            # /lint <branch>
-            pat = re.compile(rf"^{re.escape(cmd_name)}\s+(\S+)\s*$", re.MULTILINE)
-        else:
-            continue
-        patterns.append((cmd_name, pat, cmd_cfg))
-    return patterns
-
-
-def _parse_ci_command(comment_body: str, patterns: list) -> tuple[str, dict, dict] | None:
+def _parse_ci_command(comment_body: str) -> tuple[str, str, dict] | None:
     """Parse a CI command from a PR comment.
 
-    Returns (command_name, parsed_args, command_config) or None.
+    Returns (command_name, command_type, parsed_args) or None.
     """
-    for cmd_name, pat, cmd_cfg in patterns:
+    for cmd_name, cmd_type, pat in _CMD_PATTERNS:
         m = pat.search(comment_body)
         if not m:
             continue
-        cmd_type = cmd_cfg.get("type", "")
-        if cmd_type == "bug-verification":
-            return cmd_name, {"test_file": m.group(1), "branch": m.group(2)}, cmd_cfg
-        elif cmd_type == "command":
-            return cmd_name, {"test_command": m.group(1), "branch": m.group(2)}, cmd_cfg
-        elif cmd_type == "fixed-command":
-            return cmd_name, {"branch": m.group(1)}, cmd_cfg
+        args = {"command": m.group(1), "branch": m.group(2)}
+        # Extract optional --setup flag from the full matched line
+        setup_m = _SETUP_RE.search(comment_body)
+        if setup_m:
+            args["setup"] = setup_m.group(1)
+        return cmd_name, cmd_type, args
     return None
 
 
-def _validate_ci_args(command: str, args: dict, cmd_cfg: dict,
-                      cfg: Config, repo_path: str) -> str | None:
+def _validate_ci_args(args: dict, cfg: Config, repo_path: str) -> str | None:
     """Validate CI command arguments. Returns error message or None."""
     branch = args.get("branch", "")
-    arg_defs = cmd_cfg.get("args", {})
-
-    # Validate branch
-    branch_pat = arg_defs.get("branch", {}).get("pattern", r"^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$")
-    if not re.match(branch_pat, branch):
+    if not _BRANCH_RE.match(branch):
         return f"Invalid branch name: `{branch}`"
     if not gitea_api_ok(cfg, "GET", f"/repos/{repo_path}/branches/{branch}"):
         return f"Branch `{branch}` does not exist in {repo_path}"
 
-    if "test_file" in args:
-        test_file = args["test_file"]
-        file_pat = arg_defs.get("test_file", {}).get("pattern", r"^[a-zA-Z0-9][a-zA-Z0-9/_.-]*\.(py|sh)$")
-        if not re.match(file_pat, test_file):
-            return f"Invalid test file path: `{test_file}`"
-        if ".." in test_file:
-            return f"Path traversal not allowed: `{test_file}`"
-        if not gitea_api_ok(cfg, "GET", f"/repos/{repo_path}/contents/{test_file}?ref={branch}"):
-            return f"File `{test_file}` not found on branch `{branch}`"
+    command = args.get("command", "")
+    if not command:
+        return "Missing test command"
 
     return None
 
@@ -206,15 +194,25 @@ def _build_test_docker_args(repo_dir: str, image: str, runtime: str,
     return args
 
 
+def _build_setup_block(setup: str) -> str:
+    """Build a shell block to run the setup command, if provided."""
+    if not setup:
+        return ""
+    return f"""
+echo '=== Setup ==='
+{setup} 2>&1
+echo '=== Setup done ==='
+"""
+
+
 def _run_bug_verification(repo_dir: str, pr_branch: str, base_branch: str,
-                          test_file: str, image: str, runtime: str,
-                          ci_defaults: dict, pr_label: str) -> dict:
+                          command: str, setup: str, image: str, runtime: str,
+                          ci_config: dict, pr_label: str) -> dict:
     """Run time-travel bug verification. Returns result dict."""
-    ext = Path(test_file).suffix
-    runner = "python3" if ext == ".py" else "bash"
-    timeout = ci_defaults.get("timeout", 600)
-    memory = ci_defaults.get("memory", "2g")
-    cpus = ci_defaults.get("cpus", "2")
+    timeout = int(ci_config.get("timeout", 600))
+    memory = ci_config.get("memory", "2g")
+    cpus = ci_config.get("cpus", "2")
+    setup_block = _build_setup_block(setup)
 
     script = f"""
 set -e
@@ -222,18 +220,12 @@ cd /repo
 
 git checkout --quiet '{pr_branch}' 2>&1
 COMMIT=$(git rev-parse --short HEAD)
-
-# Save test file from PR branch
-mkdir -p /tmp/saved
-cp '{test_file}' /tmp/saved/repro
-
+{setup_block}
 # === Step 1: Base branch (expect FAIL) ===
 git checkout --quiet '{base_branch}' 2>&1
-mkdir -p "$(dirname '{test_file}')"
-cp /tmp/saved/repro '{test_file}'
 echo '=== Running on base branch ({base_branch}) ==='
 set +e
-{runner} '{test_file}' 2>&1
+{command} 2>&1
 BASE_RC=$?
 set -e
 echo "=== Base exit code: $BASE_RC ==="
@@ -242,7 +234,7 @@ echo "=== Base exit code: $BASE_RC ==="
 git checkout --quiet '{pr_branch}' 2>&1
 echo '=== Running on PR branch ({pr_branch}) ==='
 set +e
-{runner} '{test_file}' 2>&1
+{command} 2>&1
 PR_RC=$?
 set -e
 echo "=== PR exit code: $PR_RC ==="
@@ -281,12 +273,13 @@ echo "PR_RC=$PR_RC"
 
 
 def _run_test_verification(repo_dir: str, pr_branch: str, test_command: str,
-                           image: str, runtime: str, ci_defaults: dict,
-                           pr_label: str) -> dict:
+                           setup: str, image: str, runtime: str,
+                           ci_config: dict, pr_label: str) -> dict:
     """Run a test command on a branch. Returns result dict."""
-    timeout = ci_defaults.get("timeout", 600)
-    memory = ci_defaults.get("memory", "2g")
-    cpus = ci_defaults.get("cpus", "2")
+    timeout = int(ci_config.get("timeout", 600))
+    memory = ci_config.get("memory", "2g")
+    cpus = ci_config.get("cpus", "2")
+    setup_block = _build_setup_block(setup)
 
     script = f"""
 set -e
@@ -294,7 +287,7 @@ cd /repo
 
 git checkout --quiet '{pr_branch}' 2>&1
 COMMIT=$(git rev-parse --short HEAD)
-
+{setup_block}
 echo '=== Running test command ==='
 set +e
 {test_command} 2>&1
@@ -331,68 +324,17 @@ echo "TEST_RC=$TEST_RC"
     return result
 
 
-def _run_fixed_command_verification(repo_dir: str, branch: str, command: str,
-                                    image: str, runtime: str, cmd_cfg: dict,
-                                    ci_defaults: dict, pr_label: str) -> dict:
-    """Run a fixed command from ci-commands.json on a branch."""
-    timeout = cmd_cfg.get("timeout", ci_defaults.get("timeout", 600))
-    memory = cmd_cfg.get("memory", ci_defaults.get("memory", "2g"))
-    cpus = cmd_cfg.get("cpus", ci_defaults.get("cpus", "2"))
-
-    script = f"""
-set -e
-cd /repo
-
-git checkout --quiet '{branch}' 2>&1
-COMMIT=$(git rev-parse --short HEAD)
-
-echo '=== Running: {command} ==='
-set +e
-{command} 2>&1
-TEST_RC=$?
-set -e
-echo "=== Exit code: $TEST_RC ==="
-
-echo '---RESULTS---'
-echo "COMMIT=$COMMIT"
-echo "TEST_RC=$TEST_RC"
-"""
-
-    try:
-        r = subprocess.run(
-            _build_test_docker_args(repo_dir, image, runtime, memory, cpus,
-                                    pr_label, script),
-            capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return {"success": False, "output": "Verification timed out.",
-                "commit": "", "test_rc": -1}
-
-    output = r.stdout + r.stderr
-    result: dict = {"output": output, "commit": "", "test_rc": -1}
-
-    if "---RESULTS---" in output:
-        for line in output.split("---RESULTS---")[1].splitlines():
-            line = line.strip()
-            if line.startswith("COMMIT="):
-                result["commit"] = line.split("=", 1)[1]
-            elif line.startswith("TEST_RC="):
-                result["test_rc"] = int(line.split("=", 1)[1])
-
-    result["success"] = (result["test_rc"] == 0)
-    return result
-
-
 # ─── Result formatting ────────────────────────────────────────────────────────
 
 
-def _format_bug_result(result: dict, test_file: str,
+def _format_bug_result(result: dict, command: str,
                        base_branch: str, pr_branch: str) -> str:
     """Format a bug verification result as markdown."""
     status = "PASS" if result["success"] else "FAIL"
     base_ok = "pass" if result["base_rc"] != 0 else "FAIL"
     pr_ok = "pass" if result["pr_rc"] == 0 else "FAIL"
 
-    body = f"""## CI: {test_file}
+    body = f"""## CI: {command}
 
 **Tested commit:** `{result.get('commit', 'unknown')}`
 **Status:** {status}
@@ -497,11 +439,9 @@ def _ci_log(msg: str) -> None:
 
 def _ci_watch_loop(cfg: Config) -> None:
     """Main CI watch polling loop. Runs until killed."""
-    ci_config = _load_ci_commands()
-    patterns = _build_ci_command_patterns(ci_config)
-    defaults = ci_config.get("defaults", {})
-    rate_limit = defaults.get("rate_limit", 10)
-    rate_window = defaults.get("rate_window", 3600)
+    ci_config = _load_ci_config()
+    rate_limit = int(ci_config.get("rate_limit", 10))
+    rate_window = int(ci_config.get("rate_window", 3600))
 
     CI_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -509,11 +449,11 @@ def _ci_watch_loop(cfg: Config) -> None:
     poll_interval = cfg.ci_watch_poll_interval
 
     _ci_log(f"CI watch started (poll every {poll_interval}s)")
-    _ci_log(f"Commands: {', '.join(ci_config.get('commands', {}).keys())}")
+    _ci_log(f"Commands: {', '.join(name for name, _, _ in _CMD_PATTERNS)}")
 
     while True:
         try:
-            _ci_watch_poll(cfg, patterns, defaults, rate_limit, rate_window, seen_comment_ids)
+            _ci_watch_poll(cfg, ci_config, rate_limit, rate_window, seen_comment_ids)
         except KeyboardInterrupt:
             _ci_log("CI watch stopped.")
             break
@@ -529,7 +469,7 @@ def _ci_watch_loop(cfg: Config) -> None:
         time.sleep(poll_interval)
 
 
-def _ci_watch_poll(cfg: Config, patterns: list, defaults: dict,
+def _ci_watch_poll(cfg: Config, ci_config: dict,
                    rate_limit: int, rate_window: int,
                    seen_comment_ids: set[int]) -> None:
     """Single poll iteration: check all agent repos for CI commands."""
@@ -598,11 +538,11 @@ def _ci_watch_poll(cfg: Config, patterns: list, defaults: dict,
                     seen_comment_ids.add(comment_id)
 
                     comment_body = comment.get("body", "")
-                    parsed = _parse_ci_command(comment_body, patterns)
+                    parsed = _parse_ci_command(comment_body)
                     if not parsed:
                         continue
 
-                    cmd_name, cmd_args, cmd_cfg = parsed
+                    cmd_name, cmd_type, cmd_args = parsed
                     project = login.removeprefix("agent-")
                     pr_key = f"{repo_full}#{pr_number}"
                     pr_label = pr_key
@@ -617,7 +557,7 @@ def _ci_watch_poll(cfg: Config, patterns: list, defaults: dict,
                         continue
 
                     # Validate
-                    error = _validate_ci_args(cmd_name, cmd_args, cmd_cfg, cfg, repo_full)
+                    error = _validate_ci_args(cmd_args, cfg, repo_full)
                     if error:
                         _gitea_post_comment(
                             cfg, repo_full, pr_number,
@@ -627,15 +567,17 @@ def _ci_watch_poll(cfg: Config, patterns: list, defaults: dict,
                     # Execute
                     _ci_watch_execute(
                         cfg, repo_full, pr_number, pr, cmd_name,
-                        cmd_args, cmd_cfg, defaults, project, pr_label)
+                        cmd_type, cmd_args, ci_config, project, pr_label)
 
 
 def _ci_watch_execute(cfg: Config, repo_full: str, pr_number: int,
-                      pr: dict, cmd_name: str, cmd_args: dict,
-                      cmd_cfg: dict, defaults: dict,
+                      pr: dict, cmd_name: str, cmd_type: str,
+                      cmd_args: dict, ci_config: dict,
                       project: str, pr_label: str) -> None:
     """Clone repo, run test in container, post results."""
     branch = cmd_args["branch"]
+    command = cmd_args["command"]
+    setup = cmd_args.get("setup", "")
     base_branch = pr.get("base", {}).get("ref", "main")
     head_sha = pr.get("head", {}).get("sha", "")
     agent_info = _get_agent_container_info(project)
@@ -659,22 +601,16 @@ def _ci_watch_execute(cfg: Config, repo_full: str, pr_number: int,
             return
 
         # Run test
-        cmd_type = cmd_cfg.get("type", "")
         if cmd_type == "bug-verification":
             result = _run_bug_verification(
                 repo_dir, branch, base_branch,
-                cmd_args["test_file"], image, runtime, defaults, pr_label)
-            body = _format_bug_result(result, cmd_args["test_file"], base_branch, branch)
+                command, setup, image, runtime, ci_config, pr_label)
+            body = _format_bug_result(result, command, base_branch, branch)
         elif cmd_type == "command":
             result = _run_test_verification(
-                repo_dir, branch, cmd_args["test_command"],
-                image, runtime, defaults, pr_label)
-            body = _format_test_result(result, cmd_args["test_command"], branch)
-        elif cmd_type == "fixed-command":
-            fixed_cmd = cmd_cfg.get("command", "")
-            result = _run_fixed_command_verification(
-                repo_dir, branch, fixed_cmd, image, runtime, cmd_cfg, defaults, pr_label)
-            body = _format_test_result(result, fixed_cmd, branch)
+                repo_dir, branch, command, setup,
+                image, runtime, ci_config, pr_label)
+            body = _format_test_result(result, command, branch)
         else:
             _ci_log(f"  Unknown command type: {cmd_type}")
             return
@@ -844,7 +780,7 @@ def cmd_setup() -> None:
 
     print(f"\nCI watch enabled (poll every {interval}s).")
     print(f"CI results will be posted by '{CI_USER}'.")
-    print("Commands are defined in ci-commands.json.")
+    print("Resource limits are in ci-config.yaml.")
     print("Run 'sandbox ci-watch start' or 'sandbox up' to start.")
 
 
@@ -855,8 +791,8 @@ def cmd_start() -> None:
         print(f"CI watch is already running (PID {pid}).")
         return
 
-    if not CI_COMMANDS_FILE.exists():
-        die("ci-commands.json not found. Cannot start CI watch.")
+    if not CI_CONFIG_FILE.exists():
+        die("ci-config.yaml not found. Cannot start CI watch.")
 
     # Start background process
     CI_WATCH_DIR.mkdir(parents=True, exist_ok=True)

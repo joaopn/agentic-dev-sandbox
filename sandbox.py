@@ -697,8 +697,8 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     # CI Watch setup prompt
     if not cfg.ci_watch_enabled:
-        answer = input("\nEnable CI watch for automated PR testing? [y/N]: ").strip().lower()
-        if answer in ("y", "yes"):
+        answer = input("\nEnable CI watch for automated PR testing? [Y/n]: ").strip().lower()
+        if answer not in ("n", "no"):
             _run_ci_watch("setup")
             # Reload config to pick up new CI watch settings
             cfg = load_config()
@@ -791,10 +791,10 @@ def cmd_create(args: argparse.Namespace) -> None:
                  {**repo_features, "has_issues": False})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-admin",
                  {"permission": "admin"})
-    # Grant CI watch read access if configured (so sandbox-ci can post PR comments)
+    # Grant CI watch write access if configured (so sandbox-ci can post and attach to comments)
     if cfg.ci_watch_gitea_token:
         gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/collaborators/sandbox-ci",
-                     {"permission": "read"})
+                     {"permission": "write"})
     gitea_api_ok(cfg, "PUT", f"/repos/{gitea_user}/{project}/subscription")
 
     # Determine base branch: --branch flag → Gitea mirror's default_branch
@@ -1251,13 +1251,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(f"  Status:    running (PID {pid})")
         print(f"  Poll:      every {cfg.ci_watch_poll_interval}s")
         print(f"  Log:       {CI_WATCH_LOG_FILE}")
-        if CI_COMMANDS_FILE.exists():
-            try:
-                ci_cfg = json.loads(CI_COMMANDS_FILE.read_text())
-                cmds = ", ".join(ci_cfg.get("commands", {}).keys())
-                print(f"  Commands:  {cmds}")
-            except (json.JSONDecodeError, OSError):
-                pass
+        print("  Commands:  /test-pr, /test-pr-bug")
     elif cfg.ci_watch_enabled:
         print("  Status:    configured but not running")
         print("  Run 'sandbox ci-watch start' or 'sandbox up' to start.")
@@ -1462,7 +1456,7 @@ def cmd_logs(args: argparse.Namespace) -> None:
 CI_WATCH_DIR = SCRIPT_DIR / ".ci-watch"
 CI_WATCH_PID_FILE = CI_WATCH_DIR / "ci-watch.pid"
 CI_WATCH_LOG_FILE = CI_WATCH_DIR / "ci-watch.log"
-CI_COMMANDS_FILE = SCRIPT_DIR / "ci-commands.json"
+CI_CONFIG_FILE = SCRIPT_DIR / "ci-config.yaml"
 
 
 def _run_ci_watch(*args: str) -> None:

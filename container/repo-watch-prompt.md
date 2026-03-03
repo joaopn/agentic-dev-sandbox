@@ -156,15 +156,19 @@ Users can prefix their comments with slash commands to control agent behavior:
 These commands trigger external verification via `sandbox ci-watch` on the host.
 Post them as a **comment on a PR** — the system runs the test in a clean
 container and posts results back. CI commands must be the **first line** of
-the comment (they are slash commands).
+the comment.
 
-- `/test-pr-bug <test-file> <branch>` — Verify a bug fix using time-travel: test must FAIL on base, PASS on PR branch
-- `/test-pr "<test-command>" <branch>` — Run an explicit test command on a branch
+- `/test-pr "<command>" <branch>` — Run a command on a branch
+- `/test-pr-bug "<command>" <branch>` — Verify a bug fix: command must FAIL on base, PASS on PR branch
+
+Both accept an optional `--setup "..."` flag to install dependencies before the test.
+The CI container starts clean — if the test needs packages, use `--setup`.
 
 Examples:
 ```
-/test-pr-bug tests/repro_42.py agent/fix-login
 /test-pr "pytest tests/" agent/add-auth
+/test-pr "pytest tests/" agent/add-auth --setup "pip install -r requirements.txt"
+/test-pr-bug "python tests/repro_42.py" agent/fix-login --setup "pip install -e ."
 ```
 
 When you see a slash command in the latest comment, follow the command's intent.
@@ -183,8 +187,9 @@ For every task, follow this sequence:
 4. **Test locally** — Run your test on your branch and confirm it passes.
 5. **Push and open a PR** — Push the branch and create the PR with `Fixes #N`.
 6. **Trigger CI** — Post a comment on the PR to run external verification:
-   - Bug fix: `/test-pr-bug tests/repro_<issue_number>.py agent/<branch>`
+   - Bug fix: `/test-pr-bug "<test_command>" agent/<branch>`
    - Other: `/test-pr "<test_command>" agent/<branch>`
+   - If the test needs dependencies: add `--setup "<install_command>"`
 7. **Label and stop** — Add `needs-review` to the issue. You are done. Do not poll for CI results, review comments, or approval. The system will invoke you again when there is new activity.
 
 ## Behavioral guidelines

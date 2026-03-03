@@ -301,7 +301,7 @@ POLL_INTERVAL=60 REPO_WATCH_MAX_TURNS=50 REPO_WATCH_TIMEOUT=15m ./repo-watch.sh
 
 ## ◾ CI Watch
 
-External PR verification that neither the agent nor a compromised container can tamper with. Post a command on a PR, the host runs the tests in a sandboxed container (no network, no tokens), and posts results back as `sandbox-admin`.
+External PR verification that neither the agent nor a compromised container can tamper with. Post a command on a PR, the host runs the tests in a sandboxed container (no tokens, no shared volumes), and posts results back as `sandbox-ci`.
 
 ### Why
 
@@ -309,79 +309,59 @@ The SWE agent lies. It claims tests pass without running them, writes vacuous te
 
 ### How it works
 
-```
-Agent or human posts PR comment:  /test-pr-bug tests/repro_42.py agent/fix-login
-                                              │
-                                              ▼
-                             sandbox ci-watch polls Gitea API, finds command
-                                              │
-                                              ▼
-                             Host clones repo to temp dir (using admin token)
-                                              │
-                                              ▼
-                            docker run --rm --network=none -v /tmp/ci-xyz:/repo:ro
-                              ├─ No network, no tokens, read-only repo
-                              ├─ Run test per command type (see below)
-                              └─ Host captures output, posts results as sandbox-admin
-                                              │
-                                              ▼
-                            repo-watch detects new PR comment on next poll
-                              ├─ Passed → agent proceeds
-                              └─ Failed → agent fixes and re-triggers
+```mermaid
+flowchart TD
+    A["Agent or human posts PR comment:<br>/test-pr &quot;pytest tests/&quot; agent/fix-login"] --> B
+    B["ci-watch polls Gitea API, finds command"] --> C
+    C["Host clones repo to temp dir"] --> D
+    D["docker run --rm -v /tmp/ci-xyz:/repo<br>No tokens, no shared volumes"]
+    D --> E["Run test per command type"]
+    E --> F["Host posts results as sandbox-ci"]
+    F --> G["repo-watch detects new PR comment"]
+    G -->|Passed| H["Agent proceeds"]
+    G -->|Failed| I["Agent fixes and re-triggers"]
 ```
 
 ### Commands
 
-Commands are defined in `ci-commands.json` and can be customized. The default commands are:
+Post these as a **comment on a PR**. CI watch runs the test in a clean container and posts results back.
 
-#### `/test-pr-bug <test-file> <branch>`
+#### `/test-pr "<command>" <branch> [--setup "<setup-command>"]`
+
+Runs a command on a branch:
+
+1. Clone repo, checkout `<branch>`, record commit SHA
+2. Run optional setup command (if `--setup` provided)
+3. Run `<command>` — **must exit 0**
+
+```
+/test-pr "pytest tests/" agent/add-auth
+/test-pr "pytest tests/" agent/add-auth --setup "pip install -r requirements.txt"
+/test-pr "npm test" agent/add-feature --setup "npm install"
+```
+
+#### `/test-pr-bug "<command>" <branch> [--setup "<setup-command>"]`
 
 Verifies a bug fix using the "time-travel" method:
 
 1. Clone repo, checkout `<branch>`, record commit SHA
-2. Save `<test-file>` from `<branch>`
-3. Checkout base branch, run the test — **must exit non-zero** (bug exists on base)
-4. Checkout `<branch>`, run the test — **must exit 0** (fix works)
-
-The test file is uploaded as a downloadable Gitea attachment on the result comment for human review.
+2. Run optional setup command (if `--setup` provided)
+3. Checkout base branch, run `<command>` — **must exit non-zero** (bug exists on base)
+4. Checkout `<branch>`, run `<command>` — **must exit 0** (fix works)
 
 ```
-/test-pr-bug tests/repro_42.py agent/fix-login
+/test-pr-bug "python tests/repro_42.py" agent/fix-login
+/test-pr-bug "python tests/repro_42.py" agent/fix-login --setup "pip install -e ."
 ```
 
-#### `/test-pr "<test-command>" <branch>`
-
-Runs an explicit test command on a branch:
-
-1. Clone repo, checkout `<branch>`, record commit SHA
-2. Run `<test-command>` — **must exit 0**
-
-```
-/test-pr "pytest tests/" agent/add-auth
-/test-pr "python -m unittest discover" agent/refactor-db
-```
-
-#### Custom commands
-
-Add custom CI commands by editing `ci-commands.json`. For example, to add a `/lint` command:
-
-```json
-"/lint": {
-  "description": "Run linter on the PR branch",
-  "type": "fixed-command",
-  "command": "ruff check .",
-  "usage": "/lint <branch>",
-  "args": { "branch": {"pattern": "^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$"} },
-  "timeout": 120, "memory": "1g"
-}
-```
+The `--setup` flag is optional. Use it when the test needs dependencies that aren't in the base agent image (e.g., `pip install -r requirements.txt`, `npm install`).
 
 ### Result format
 
-Results are posted as a PR comment by `sandbox-admin`:
+Results are posted as a PR comment by `sandbox-ci`:
 
 ```
-## CI: tests/repro_42.py
+## CI: pytest tests/
 
 **Tested commit:** `abc1234`
 **Status:** PASS
@@ -421,12 +401,9 @@ Verification runs in a disposable container with no shared state with the agent.
 - `docker run --rm` with the project's agent image (same base tools: conda, node, git, etc.)
 - **Pre-cloned by host** — the host process clones the repo to a temp directory and bind-mounts it
 - **No shared volume** — the agent's `/home/agent` volume is never mounted
-- **Network: none** — the test container has no network access at all
 - **No tokens** — no Gitea token, no Docker socket, no credentials of any kind
-- **Resource limits:** 2 GB memory, 2 CPUs, 10-minute timeout
+- **Resource limits:** 2 GB memory, 2 CPUs, 10-minute timeout (configurable in `ci-config.yaml`)
 - **cap-drop ALL** — minimal Linux capabilities
-
-If the test needs dependencies, they must already be in the agent image (the container has no network to install them).
 
 ### Security model
 
@@ -434,17 +411,13 @@ If the test needs dependencies, they must already be in the agent image (the con
 
 **No tokens in containers.** The admin token stays on the host. The repo is pre-cloned by the host and bind-mounted — the test container never sees any credentials. Even `git remote -v` shows a local path, not a URL with a token.
 
-**No network in test containers.** Test containers run with `--network=none`. A malicious test cannot download malware, exfiltrate data, or phone home.
-
-**Unforgeable results.** Results are posted as `sandbox-admin` using the admin token. The agent can only post as `agent-{project}`. The comment author is the trust signal.
+**Unforgeable results.** Results are posted as `sandbox-ci` using its own token. The agent can only post as `agent-{project}`. The comment author is the trust signal.
 
 **SHA pinning.** CI watch records the tested commit SHA. If the PR HEAD has moved since (e.g., the agent force-pushed), the result is marked stale.
 
-**Input validation.** Branch names must match `^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$`. Test file paths must match `^[a-zA-Z0-9][a-zA-Z0-9/_.-]*\.(py|sh)$` with no `..`. Both must exist in the repo (verified via Gitea API before container spin-up). No `shell=True` in subprocess calls.
+**Input validation.** Branch names must match `^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$`. Branches must exist in the repo (verified via Gitea API before container spin-up). No `shell=True` in subprocess calls.
 
-**Rate limiting.** Max 10 CI runs per PR per hour (configurable in `ci-commands.json`).
-
-**Rate limiting.** Max 10 verification runs per PR per hour.
+**Rate limiting.** Max 10 CI runs per PR per hour (configurable in `ci-config.yaml`).
 
 ### Agent instructions
 
