@@ -16,17 +16,17 @@ A simple, but opinionated, per-project sandboxed development environment for age
 
 ### TL;DR
 ```bash
-# 1. One-time setup (starts Gitea, router)
+# 1. One-time setup (starts Gitea, router, ci-watch)
 python sandbox.py setup
 
 # 2. Create a sandboxed project with python and pre-install Claude Code in YOLO mode
 python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
 
-# 3. Enter the sandbox
+# 3. Enter the sandbox and code away
 ## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
 python sandbox.py attach myproject
 
-# 4. Fetch agent committed code
+# 4. Fetch agent committed code (with optional security review)
 python fetch-sandbox.py <myproject local repo> <agent branch name>
 ```
 
@@ -69,18 +69,18 @@ graph LR
 
 ## ◾ Repo Watch
 
-The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
+The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, runs remote tests, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
 
-<p align="center">
-  <img src="docs/img/pirate.png" width="600" alt="Repo Watch example">
-</p>
+
+<div style="display: flex; gap: 10px;">
+  <img src="docs/img/repo-watch1.png" width="50%" />
+  <img src="docs/img/repo-watch2.png" width="50%" />
+</div>
+
 
 Prefix an issue body or comment with a slash command (`/plan`, `/explain`, `/review`, `/test`, etc.) to add predefined prompts and restrict the agent's behavior: e.g. `/plan` to use a planning prompt and disable file writing. Commands are defined in `container/issue-commands.json` and can be customized.
 
-**[Optional] CI Watch** — Post `/test-pr` or `/test-pr-bug` on a PR to trigger external verification. A host-side polling process (`sandbox ci-watch`) runs the tests in a clean container (no tokens, no shared volumes) and posts results back as `sandbox-ci`. Resource limits are configurable in `ci-config.yaml`. See [CI Watch](docs/GUIDE.md#-ci-watch) in the guide.
-
-
-To use:
+To use repo-watch:
 ```bash
 # Inside the agent container (after sandbox attach)
 claude                # authenticate first
@@ -90,6 +90,11 @@ claude                # authenticate first
 ```
 
 Agent comments also attach its full internal (thinking) logs as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
+
+### CI Watch
+
+LLM agents tend to lie and claim tests pass without running them. CI Watch remediates it by integrating passing an external CI test as a necessary PR step. The agent triggers then with a `/test-pr` or `/test-pr-bug` command and `sandbox-ci` runs the tests. The agent iterates until tests pass. Attempts to force pass with bad tests can be easily checked by the user. It can be enabled as part of `python sandbox.py setup`. See [CI Watch](docs/GUIDE.md#-ci-watch) in the guide for details.
+
 
 ## ◾ Prerequisites
 
