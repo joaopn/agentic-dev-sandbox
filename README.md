@@ -41,23 +41,16 @@ python fetch-sandbox.py <myproject local repo> <agent branch name>
 [◾ Quick Start](#-quick-start)
 [◾ CLI Reference](#-cli-reference)
 [◾ File Structure](#-file-structure)
+[◾ Alternatives](#-alternatives)
 [◾ Roadmap](#-roadmap)
 [◾ Further Reading](#-further-reading)
 
 ---
 
 ## ◾ How it works
+![Workflow diagram](docs/img/diagram.png)
 
-```mermaid
-graph LR
-    Human -->|push| GitHub
-    Human <-->|add issues & fetch| Gitea
-    GitHub -->|mirror| Gitea
-    Agent <-->|get issues & push| Gitea
-    Agent -->|routed| Router -->|NAT| Web((Internet))
-```
-
-- **Local Gitea** mirrors your GitHub repos. The agent pushes to Gitea, never to GitHub
+- **Air-gapped workflow**, with a Gitea mirror of your GitHub repos. The agent pushes to Gitea, never to GitHub
 - **Agent containers** are per-project, disposable, and hardened. They can't access your LAN
   - [Optional] **Repo Watch** has the agent monitoring Gitea Issues and working on them automatically
   - [Optional] **Security review** runs at fetch time — the diff is sent to an LLM for automated security analysis (backdoors, exfiltration, dependency manipulation)
@@ -218,10 +211,27 @@ agentic-dev-sandbox/
 
 ---
 
+## ◾ Alternatives
+### [docker sandbox](https://docs.docker.com/ai/sandboxes/)
+- Uses a microVM, more secure than runc/sysbox against CVEs
+- Windows/OSX-only through Docker Desktop
+- no GPU support
+
+### [kata containers](https://github.com/kata-containers)
+- Uses a microVM, full GPU passthrough
+- cloud-native, high friction to configure and use on developer hardware
+
+### [borenstein/yolo-cage](https://github.com/borenstein/yolo-cage)
+- Similar idea as this
+- Works directly on github
+
+Happy to include missing alternatives, this field moves fast =)
+
+
 ## ◾ Roadmap
-- Script support for other agentic platforms besides Claude Code (Codex, Aider)
-- Podman support (both repo and sandbox)
-- multi-user support
+- Script support for other agentic platforms besides Claude Code (Codex, opencode)
+- Podman support
+- Multi-user support
 
 ## ◾ Further Reading
 - **[docs/GUIDE.md](docs/GUIDE.md)** — Image profiles, reviewer setup, VS Code Remote-SSH, networking details, `container/` directory, git remotes, repo-watch internals, FAQ.
