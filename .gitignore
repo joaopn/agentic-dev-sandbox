@@ -3,3 +3,8 @@ __pycache__/
 container_volumes/
 .ci-watch/
 plans/
+
+# AI agent local files
+.claude/
+.codex/
+.opencode/
