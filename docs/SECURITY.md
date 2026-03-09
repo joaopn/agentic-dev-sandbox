@@ -19,7 +19,7 @@
 | Agent exfiltrates via non-standard ports | Router FORWARD chain allows only 80/443/DNS/ICMP (default) |
 | Agent modifies its own routing | No NET_ADMIN capability; route injected from a separate throwaway container |
 | Router goes down | Fail-closed: internal network has no gateway, agent loses all external connectivity |
-| Poisoned code enters real repo | Gitea air gap + LLM security review + human review |
+| Poisoned code enters real repo | Gitea isolation + LLM security review + human review |
 | Symlinks/dotfiles auto-execute | Pre-merge safety checks flag them |
 | Agent modifies its own review | Separate API key, runs on host only at fetch time |
 | Agent accesses other projects | Per-project Gitea user + per-project network isolation |

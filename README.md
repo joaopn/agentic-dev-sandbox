@@ -50,7 +50,7 @@ python fetch-sandbox.py <myproject local repo> <agent branch name>
 ## ◾ How it works
 ![Workflow diagram](docs/img/diagram.png)
 
-- **Air-gapped workflow**, with a Gitea mirror of your GitHub repos. The agent pushes to Gitea, never to GitHub
+- **Isolated workflow**, with a Gitea mirror of your GitHub repos. The agent pushes to Gitea, never to GitHub
 - **Agent containers** are per-project, disposable, and hardened. They can't access your LAN
   - [Optional] **Repo Watch** has the agent monitoring Gitea Issues and working on them automatically
   - [Optional] **Security review** runs at fetch time — the diff is sent to an LLM for automated security analysis (backdoors, exfiltration, dependency manipulation)
