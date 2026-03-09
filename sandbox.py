@@ -191,6 +191,13 @@ def parse_project_name(url: str) -> str:
     return name
 
 
+def list_agents() -> list[str]:
+    """Return available agent types (subdirectories of container/)."""
+    container_dir = SCRIPT_DIR / "container"
+    return sorted(p.name for p in container_dir.iterdir()
+                  if p.is_dir() and not p.name.startswith("."))
+
+
 def resolve_profile_image(profile: str) -> tuple[str, Path]:
     """Return (image_tag, dockerfile_path) for a given profile name."""
     dockerfile = SCRIPT_DIR / "agent" / f"Dockerfile.{profile}"
@@ -288,6 +295,17 @@ def install_claude_code(container_name: str) -> None:
     print("Claude Code installed.")
 
 
+def install_agent(agent_type: str, container_name: str) -> None:
+    """Install the chosen agent CLI inside the container."""
+    installers = {
+        "claude": install_claude_code,
+    }
+    installer = installers.get(agent_type)
+    if not installer:
+        die(f"No installer for agent '{agent_type}'.")
+    installer(container_name)
+
+
 def install_docker_dind(container_name: str) -> None:
     """Install Docker CE inside a Sysbox agent container and start dockerd."""
     r = subprocess.run(
@@ -343,7 +361,7 @@ def build_agent_docker_args(
     branch: str = "",
     cpus: str = "",
     gpus: str = "",
-    claude_yolo: bool = False,
+    agent_type: str = "",
     docker: bool = False,
     ci_watch: bool = False,
 ) -> list[str]:
@@ -392,8 +410,8 @@ def build_agent_docker_args(
         args += [f"--cpus={cpus}"]
     if gpus:
         args += [f"--gpus={gpus}"]
-    if claude_yolo:
-        args += ["-e", "CLAUDE_YOLO=true"]
+    if agent_type:
+        args += ["-e", f"AGENT_TYPE={agent_type}"]
     if ci_watch:
         args += ["-e", "CI_WATCH_ENABLED=true"]
     args.append(image)
@@ -721,6 +739,8 @@ CI watch:      {'enabled' if cfg.ci_watch_enabled else 'disabled (run sandbox ci
 
 def cmd_create(args: argparse.Namespace) -> None:
     cfg = load_config()
+    if args.agent and not (SCRIPT_DIR / "container" / args.agent).is_dir():
+        die(f"Unknown agent '{args.agent}'. Available: {', '.join(list_agents())}")
     if args.docker and not sysbox_available():
         die("--docker requires Sysbox runtime. See: https://github.com/nestybox/sysbox#installation")
     project = parse_project_name(args.github_url)
@@ -839,16 +859,24 @@ def cmd_create(args: argparse.Namespace) -> None:
             run_check(["docker", "volume", "create", volume_name])
 
     # Copy container/ files to agent home and fix ownership for bind mounts.
+    # Two-layer copy: universal files from container/, then agent-specific overlay
+    # from container/<agent>/ (if --agent was specified).
     # Use host GID so the invoking user gets group rw access to container_volumes/.
     host_gid = os.getgid()
     container_src = SCRIPT_DIR / "container"
+    agent_type = args.agent
+    agent_src = container_src / agent_type if agent_type else None
+    docker_copy_args = ["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent"]
+    copy_cmds = []
     if container_src.is_dir():
-        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent",
-                    "-v", f"{container_src}:/src:ro", "alpine",
-                    "sh", "-c", f"cp /src/* /home/agent/ && chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
-    else:
-        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
-                    "sh", "-c", f"chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
+        docker_copy_args += ["-v", f"{container_src}:/src:ro"]
+        copy_cmds.append("find /src -maxdepth 1 -type f -exec cp {} /home/agent/ \\;")
+    if agent_src and agent_src.is_dir():
+        docker_copy_args += ["-v", f"{agent_src}:/agent-src:ro"]
+        copy_cmds.append("cp /agent-src/* /home/agent/")
+    copy_cmds.append(f"chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent")
+    docker_copy_args += ["alpine", "sh", "-c", " && ".join(copy_cmds)]
+    run_check(docker_copy_args)
 
     # 7. Create per-project network and connect infrastructure
     print("Setting up agent network...")
@@ -873,7 +901,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=base_branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
+        gpus=args.gpus or profile_default_gpus(profile), agent_type=args.agent,
         docker=args.docker, ci_watch=cfg.ci_watch_enabled,
     )
     run_check(["docker", *docker_args])
@@ -882,9 +910,9 @@ def cmd_create(args: argparse.Namespace) -> None:
     print("Injecting network route...")
     inject_route(container_name, router_ip)
 
-    # 11. Install Claude Code if --claude-yolo (needs network, so after route injection)
-    if args.claude_yolo:
-        install_claude_code(container_name)
+    # 11. Install agent CLI if --agent (needs network, so after route injection)
+    if args.agent:
+        install_agent(args.agent, container_name)
 
     # 12. Install Docker-in-Docker if --docker (needs network, so after route injection)
     if args.docker:
@@ -1068,15 +1096,18 @@ def cmd_set_branch(args: argparse.Namespace) -> None:
     r = run(["docker", "exec", container_name, "bash", "-c",
              "echo ${CI_WATCH_ENABLED:-}"], capture_output=True, text=True)
     ci_watch_in_container = r.stdout.strip() == "true"
-    for filename in ["CLAUDE.md", "repo-watch-prompt.md"]:
+    # Discover template files dynamically (agent-specific + universal .md files)
+    r = run(["docker", "exec", container_name, "bash", "-c",
+             r"for f in /home/agent/.*.template; do [ -f \"$f\" ] && basename \"$f\" .template | sed 's/^\\.//'; done"],
+            capture_output=True, text=True)
+    template_files = [f.strip() for f in r.stdout.strip().split('\n') if f.strip()]
+    for filename in template_files:
         template = f"{home}/.{filename}.template"
         target = f"{home}/{filename}"
         # Re-render {{BASE_BRANCH}}
         render_cmd = (
-            f"if [ -f '{template}' ]; then "
             f"cp '{template}' '{target}' && "
-            f"sed -i 's/{{{{BASE_BRANCH}}}}/{branch}/g' '{target}'; "
-            f"fi"
+            f"sed -i 's/{{{{BASE_BRANCH}}}}/{branch}/g' '{target}'"
         )
         run(["docker", "exec", container_name, "bash", "-c", render_cmd],
             capture_output=True)
@@ -1118,6 +1149,8 @@ def cmd_set_branch(args: argparse.Namespace) -> None:
 
 def cmd_recreate(args: argparse.Namespace) -> None:
     cfg = load_config()
+    if args.agent and not (SCRIPT_DIR / "container" / args.agent).is_dir():
+        die(f"Unknown agent '{args.agent}'. Available: {', '.join(list_agents())}")
     if args.docker and not sysbox_available():
         die("--docker requires Sysbox runtime. See: https://github.com/nestybox/sysbox#installation")
     project = args.project
@@ -1173,16 +1206,22 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     else:
         run_check(["docker", "volume", "create", volume_name])
 
-    # Copy container/ files to agent home and fix ownership
+    # Copy container/ files to agent home and fix ownership (two-layer: universal + agent)
     host_gid = os.getgid()
     container_src = SCRIPT_DIR / "container"
+    agent_type = args.agent
+    agent_src = container_src / agent_type if agent_type else None
+    docker_copy_args = ["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent"]
+    copy_cmds = []
     if container_src.is_dir():
-        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent",
-                    "-v", f"{container_src}:/src:ro", "alpine",
-                    "sh", "-c", f"cp /src/* /home/agent/ && chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
-    else:
-        run_check(["docker", "run", "--rm", "-v", f"{volume_name}:/home/agent", "alpine",
-                    "sh", "-c", f"chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent"])
+        docker_copy_args += ["-v", f"{container_src}:/src:ro"]
+        copy_cmds.append("find /src -maxdepth 1 -type f -exec cp {} /home/agent/ \\;")
+    if agent_src and agent_src.is_dir():
+        docker_copy_args += ["-v", f"{agent_src}:/agent-src:ro"]
+        copy_cmds.append("cp /agent-src/* /home/agent/")
+    copy_cmds.append(f"chmod +x /home/agent/*.sh 2>/dev/null; chown -R 1000:{host_gid} /home/agent && chmod 2770 /home/agent")
+    docker_copy_args += ["alpine", "sh", "-c", " && ".join(copy_cmds)]
+    run_check(docker_copy_args)
 
     # Generate fresh Gitea token
     print("Generating fresh Gitea token...")
@@ -1223,7 +1262,7 @@ def cmd_recreate(args: argparse.Namespace) -> None:
         gitea_user=gitea_user, ssh_pass=ssh_pass,
         dns_servers=cfg.dns_servers, memory=memory, open_egress=open_egress, image=image,
         branch=args.branch or "", cpus=args.cpus or "",
-        gpus=args.gpus or profile_default_gpus(profile), claude_yolo=args.claude_yolo,
+        gpus=args.gpus or profile_default_gpus(profile), agent_type=args.agent,
         docker=args.docker, ci_watch=cfg.ci_watch_enabled,
     )
 
@@ -1234,9 +1273,9 @@ def cmd_recreate(args: argparse.Namespace) -> None:
     print("Injecting network route...")
     inject_route(container_name, router_ip)
 
-    # Install Claude Code if --claude-yolo (needs network, so after route injection)
-    if args.claude_yolo:
-        install_claude_code(container_name)
+    # Install agent CLI if --agent (needs network, so after route injection)
+    if args.agent:
+        install_agent(args.agent, container_name)
 
     # Install Docker-in-Docker if --docker (needs network, so after route injection)
     if args.docker:
@@ -1548,7 +1587,8 @@ def build_parser() -> argparse.ArgumentParser:
     container_flags.add_argument("--gpus", default="")
     container_flags.add_argument("--profile", default="")
     container_flags.add_argument("--ssh-port", type=int, default=0)
-    container_flags.add_argument("--claude-yolo", action="store_true")
+    container_flags.add_argument("--agent", default="",
+                                 help="Agent to install and configure (e.g. claude, opencode)")
     container_flags.add_argument("--docker", action="store_true",
                                  help="Enable Docker-in-Docker via Sysbox runtime")
 

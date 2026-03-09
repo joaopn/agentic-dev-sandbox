@@ -10,7 +10,7 @@
 #   REPO_BRANCH      — Deprecated alias for BASE_BRANCH
 #   SSH_PASSWORD     — Password for SSH access
 #   HOST_GID         — Host user's GID, for bind-mount access (optional)
-#   CLAUDE_YOLO      — Install Claude Code + bypass permissions (optional)
+#   AGENT_TYPE       — Agent type (e.g. claude, opencode) — triggers setup.sh (optional)
 
 set -euo pipefail
 
@@ -78,34 +78,10 @@ if ! grep -q 'umask 002' ~/.bashrc 2>/dev/null; then
     echo 'umask 002' >> ~/.bashrc
 fi
 
-# --- Claude Code setup (if --claude-yolo) ---
-if [[ "${CLAUDE_YOLO:-}" == "true" ]]; then
-    # Ensure ~/.local/bin is in PATH
-    if ! grep -q '.local/bin' ~/.bashrc 2>/dev/null; then
-        echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.bashrc
-    fi
-
-    # Pre-configure settings (no network needed, only on first run)
-    if [[ ! -f ~/.claude/settings.json ]]; then
-        mkdir -p ~/.claude
-        cat > ~/.claude/settings.json << 'SETTINGS'
-{
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  },
-  "theme": "dark"
-}
-SETTINGS
-    fi
-
-    if [[ ! -f ~/.claude.json ]]; then
-        cat > ~/.claude.json << 'SETTINGS'
-{
-  "theme": "dark"
-}
-SETTINGS
-    fi
-
+# --- Agent setup (runs agent-specific configuration from setup.sh) ---
+if [[ -f ~/setup.sh ]]; then
+    # shellcheck source=/dev/null
+    source ~/setup.sh
 fi
 
 # --- Clone or update repo ---
@@ -134,8 +110,10 @@ fi
 
 # --- Render template files (replace {{BASE_BRANCH}} placeholders) ---
 # Templates are the original files copied from container/; save them for re-rendering.
-for tmpl_file in ~/CLAUDE.md ~/repo-watch-prompt.md; do
-    if [[ -f "${tmpl_file}" ]] && grep -q '{{BASE_BRANCH}}' "${tmpl_file}" 2>/dev/null; then
+# Glob covers agent-specific files (CLAUDE.md, AGENTS.md) and universal ones (repo-watch-prompt.md).
+for tmpl_file in ~/*.md; do
+    [[ -f "${tmpl_file}" ]] || continue
+    if grep -q '{{BASE_BRANCH}}' "${tmpl_file}" 2>/dev/null; then
         # Save template as hidden dotfile (e.g. .CLAUDE.md.template) for re-rendering
         tmpl_dir=$(dirname "${tmpl_file}")
         tmpl_base=$(basename "${tmpl_file}")
@@ -151,7 +129,7 @@ for tmpl_file in ~/CLAUDE.md ~/repo-watch-prompt.md; do
 done
 
 # --- Render conditional blocks ({{#CI_WATCH}} / {{^CI_WATCH}} / {{/CI_WATCH}}) ---
-for tmpl_file in ~/CLAUDE.md ~/repo-watch-prompt.md; do
+for tmpl_file in ~/*.md; do
     [[ -f "${tmpl_file}" ]] || continue
     grep -q '{{#CI_WATCH}}\|{{^CI_WATCH}}' "${tmpl_file}" 2>/dev/null || continue
     if [[ "${CI_WATCH_ENABLED:-}" == "true" ]]; then

@@ -19,8 +19,8 @@ A simple, but opinionated, per-project sandboxed development environment for age
 # 1. One-time setup (starts Gitea, router, ci-watch)
 python sandbox.py setup
 
-# 2. Create a sandboxed project with python and pre-install Claude Code in YOLO mode
-python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
+# 2. Create a sandboxed project with python and pre-install Claude Code
+python sandbox.py create https://github.com/you/myproject --profile python --agent claude
 
 # 3. Enter the sandbox and code away
 ## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
@@ -115,13 +115,13 @@ python sandbox.py setup
 python fetch-sandbox.py setup
 
 # 3. Create a sandboxed project with python and Claude Code
-python sandbox.py create https://github.com/you/myproject --profile python --claude-yolo
+python sandbox.py create https://github.com/you/myproject --profile python --agent claude
 
 # 4. Interact with the agent
 python sandbox.py attach myproject
 ## You're in a byobu terminal session inside the agent container. Code away.
 ## F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
-## If --claude-yolo, `claude` will prompt authentication
+## If --agent claude, `claude` will prompt authentication
 
 # 5. Review the agent's committed work
 ## From the Gitea GUI: http://localhost:3000 (default port)
@@ -169,7 +169,7 @@ Create/recreate options:
   --cpus <limit>                 Container CPU limit
   --gpus <device>                GPU passthrough (e.g., "all"); requires NVIDIA Container Toolkit
   --ssh-port <port>              Host port for SSH (default: auto-assigned)
-  --claude-yolo                  Install Claude Code, auto-configure bypass permissions
+  --agent <type>                 Agent to install and configure (e.g. claude, opencode)
   --docker                       Enable Docker-in-Docker via Sysbox runtime
 ```
 
@@ -186,12 +186,15 @@ agentic-dev-sandbox/
 ├── review-config.yaml            Security review prompt and tunables
 ├── .env                          Config + secrets (gitignored)
 ├── .env.example                  Template
-├── container/                    Files copied into each agent workspace
-│   ├── CLAUDE.md                 Default agent instructions
+├── container/                    Universal + per-agent files for each workspace
 │   ├── barrier-check.sh          Passive security posture checker
-│   ├── repo-watch.sh             Agentic loop: polls issues, invokes Claude Code
 │   ├── repo-watch-prompt.md      Prompt template for repo-watch
 │   ├── issue-commands.json       Slash command definitions for repo-watch
+│   └── claude/                   Claude Code agent-specific files
+│       ├── CLAUDE.md             Agent instructions
+│       ├── repo-watch.sh         Agentic loop: polls issues, invokes Claude Code
+│       ├── agent-watch.sh        Real-time agent activity viewer
+│       └── setup.sh              Permissions bypass configuration
 ├── agent/
 │   ├── Dockerfile.python         Agent image: conda, git, byobu, sshd
 │   └── entrypoint.sh            Clone, configure git, start sshd + byobu (shared)
