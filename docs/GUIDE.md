@@ -120,11 +120,19 @@ Any files placed in `container/` are copied into each agent's home directory vol
 Use this to provide config files or custom instructions to every agent. For key-based SSH access,
 place your public key at `container/.ssh/authorized_keys`.
 
-By default it ships with:
-- `CLAUDE.md` — baseline agent instructions (git workflow, remotes, verification)
-- `repo-watch.sh` — agentic loop script (see [Repo Watch](#repo-watch))
+Universal files (shared by all agents):
 - `repo-watch-prompt.md` — prompt template for repo-watch
-- `agent-watch.sh` — real-time viewer for agent activity (see [Monitoring](#monitoring))
+- `issue-commands.json` — slash command definitions
+- `barrier-check.sh` — passive security posture checker
+
+Per-agent files live in `container/<agent>/` subdirectories:
+
+| Agent | Directory | Instructions | Notes |
+|---|---|---|---|
+| [Claude Code](https://github.com/anthropics/claude-code) | `container/claude/` | `CLAUDE.md` | JSONL activity logs, OAuth auth via `claude` |
+| [Goose](https://github.com/block/goose) | `container/goose/` | `AGENTS.md` | Plain text logs, auth via `goose configure` |
+
+Each agent directory contains: instructions file, `repo-watch.sh`, `agent-watch.sh`, and `setup.sh`.
 
 ## ◾ Git Remotes Inside the Container
 
@@ -212,8 +220,8 @@ Default endpoints are built into `fetch-sandbox.py`. Override with `REVIEWER_END
 
 ## ◾ Repo Watch
 
-`repo-watch.sh` is a bash script that turns the agent into an autonomous developer you interact with through Gitea issues. 
-It polls the Gitea API, detects new activity, and invokes Claude Code to handle it.
+`repo-watch.sh` is a bash script that turns the agent into an autonomous developer you interact with through Gitea issues.
+It polls the Gitea API, detects new activity, and invokes the agent CLI to handle it. Each supported agent (Claude Code, Goose) has its own `repo-watch.sh` in `container/<agent>/`.
 
 ### How it works
 
@@ -221,7 +229,7 @@ The script checks open issues assigned to the agent every `POLL_INTERVAL` second
 (default: 30). For each issue:
 
 - If the last comment is by the agent — skip (waiting for human input).
-- If the last comment is by a human (or the issue is new) — invoke Claude Code with
+- If the last comment is by a human (or the issue is new) — invoke the agent with
   the full conversation context.
 
 It also monitors open PRs authored by the agent for line-level review comments that don't show up as issue comments.
@@ -249,17 +257,17 @@ On first run, the script creates these labels (idempotent):
 
 ### Monitoring
 
-Each Claude Code invocation is streamed to a JSONL log file in `~/.repo-watch-logs/`.
-A symlink at `~/.repo-watch-logs/current.jsonl` points to the active log during execution.
+Each agent invocation is logged to `~/.repo-watch-logs/`. A symlink (`current.jsonl` for Claude Code, `current.log` for Goose) points to the active log during execution.
 
 **Live status** (open a new byobu window with F2):
 ```bash
-./agent-watch.sh               # real-time: elapsed time, tokens, cost, tool calls
+./agent-watch.sh               # real-time activity viewer (agent-specific formatting)
 ```
 
 **From the host** (if using `PROJECTS_DIR` bind mounts):
 ```bash
-tail -f container_volumes/<project>/.repo-watch-logs/current.jsonl
+tail -f container_volumes/<project>/.repo-watch-logs/current.jsonl  # Claude Code
+tail -f container_volumes/<project>/.repo-watch-logs/current.log    # Goose
 ```
 
 Log files persist after completion and can be attached to issue comments.
@@ -280,7 +288,7 @@ Users can prefix issue bodies or comments with slash commands to control agent b
 | `/refactor` | Improve code quality without changing behavior |
 | `/deps` | Audit dependencies for vulnerabilities and outdated packages |
 
-Each command can specify a `task_prefix` (prepended to the prompt) and `flags` (passed to the agent binary, e.g. `--disallowedTools`). To add or modify commands, edit `container/issue-commands.json`.
+Each command can specify a `task_prefix` (prepended to the prompt) and `flags` (passed to the agent binary, e.g. `--disallowedTools` for Claude Code). To add or modify commands, edit `container/issue-commands.json`.
 
 There are also **CI commands** (`/test-pr`, `/test-pr-bug`) that trigger external verification — see [CI Watch](#-ci-watch).
 

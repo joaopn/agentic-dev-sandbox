@@ -295,10 +295,36 @@ def install_claude_code(container_name: str) -> None:
     print("Claude Code installed.")
 
 
+def install_goose(container_name: str) -> None:
+    """Install Goose CLI inside the agent container (synchronous, needs network)."""
+    r = subprocess.run(
+        ["docker", "exec", container_name, "bash", "-c",
+         '[[ -x "$HOME/.local/bin/goose" ]]'],
+        capture_output=True,
+    )
+    if r.returncode == 0:
+        print("Goose already installed, skipping.")
+        return
+    print("Installing Goose dependencies...")
+    run_check([
+        "docker", "exec", container_name, "bash", "-c",
+        "sudo apt-get update -qq && sudo apt-get install -y -qq libgomp1 >/dev/null",
+    ])
+    print("Installing Goose (this may take a minute)...")
+    run_check([
+        "docker", "exec", container_name, "bash", "-c",
+        'export PATH="$HOME/.local/bin:$PATH"'
+        " && curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh"
+        " | CONFIGURE=false bash",
+    ])
+    print("Goose installed.")
+
+
 def install_agent(agent_type: str, container_name: str) -> None:
     """Install the chosen agent CLI inside the container."""
     installers = {
         "claude": install_claude_code,
+        "goose": install_goose,
     }
     installer = installers.get(agent_type)
     if not installer:

@@ -4,11 +4,13 @@
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose_v2-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-Agent-D97757.svg?logo=anthropic&logoColor=white)](https://github.com/anthropics/claude-code)
+[![Goose](https://img.shields.io/badge/Goose-Agent-F58025.svg)](https://github.com/block/goose)
 [![ShellCheck](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/shellcheck.yml)
 [![Opengrep](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/opengrep.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/opengrep.yml)
 [![Trivy](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/trivy.yml/badge.svg)](https://github.com/joaopn/agentic-dev-sandbox/actions/workflows/trivy.yml)
 
-A simple, but opinionated, per-project sandboxed development environment for agentic LLMs. The agent gets full autonomy inside of a container, but is isolated from any user data, credential or private network outside of what it is explicitly given.
+A simple, but opinionated, per-project sandboxed development environment for agentic LLMs. The agent gets full autonomy inside of a container with a git mirror, but is isolated from any user data, credential or private network outside of what it is explicitly given.
 
 *As it should be.*
 
@@ -19,11 +21,11 @@ A simple, but opinionated, per-project sandboxed development environment for age
 # 1. One-time setup (starts Gitea, router, ci-watch)
 python sandbox.py setup
 
-# 2. Create a sandboxed project with python and pre-install Claude Code
-python sandbox.py create https://github.com/you/myproject --profile python --agent claude
+# 2. Create a sandboxed project with python and pre-install an agent
+python sandbox.py create https://github.com/you/myproject --profile python --agent claude  # or --agent goose
 
 # 3. Enter the sandbox and code away
-## Use `claude` to authenticate Claude Code, F2/F3/F4 to manage windows, F6 to detach
+## Authenticate your agent (claude / goose configure), F2/F3/F4 to manage windows, F6 to detach
 python sandbox.py attach myproject
 
 # 4. Fetch agent committed code (with optional security review)
@@ -62,7 +64,7 @@ python fetch-sandbox.py <myproject local repo> <agent branch name>
 
 ## ◾ Repo Watch
 
-The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, runs remote tests, and merges when you approve. You interact as a maintainer; the agent works as a junior dev.
+The agent can monitor its Gitea repo (`http://localhost:3000`) for issues and PR activity. You open an issue, the agent picks it up, discusses via comments, writes code, opens PRs, runs remote tests, and merges when you approve. You interact as a maintainer; the agent works as a junior dev. Supported agents: [Claude Code](https://github.com/anthropics/claude-code), [Goose](https://github.com/block/goose).
 
 
 <div style="display: flex; gap: 10px;">
@@ -76,13 +78,13 @@ Prefix an issue body or comment with a slash command (`/plan`, `/explain`, `/rev
 To use repo-watch:
 ```bash
 # Inside the agent container (after sandbox attach)
-claude                # authenticate first
+claude                # authenticate (or `goose configure` for Goose)
 ./repo-watch.sh       # agent starts monitoring repo — blocks terminal
 # F2 for a new byobu window
 ./agent-watch.sh      # view the agent activity in real-time (optional)
 ```
 
-Agent comments also attach its full internal (thinking) logs as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
+Agent comments also attach activity logs as formatted markdown. See [Repo Watch](docs/GUIDE.md#repo-watch) in the guide for details.
 
 ### CI Watch
 
@@ -114,14 +116,14 @@ python sandbox.py setup
 # 2 [Optional]: configure LLM provider for security reviews at fetch time
 python fetch-sandbox.py setup
 
-# 3. Create a sandboxed project with python and Claude Code
-python sandbox.py create https://github.com/you/myproject --profile python --agent claude
+# 3. Create a sandboxed project with python and an agent (claude or goose)
+python sandbox.py create https://github.com/you/myproject --profile python --agent claude  # or --agent goose
 
 # 4. Interact with the agent
 python sandbox.py attach myproject
 ## You're in a byobu terminal session inside the agent container. Code away.
 ## F6 to detach — the agent keeps working. F2 for another terminal, F3/F4 to switch.
-## If --agent claude, `claude` will prompt authentication
+## Authenticate: `claude` for Claude Code, `goose configure` for Goose
 
 # 5. Review the agent's committed work
 ## From the Gitea GUI: http://localhost:3000 (default port)
@@ -169,7 +171,7 @@ Create/recreate options:
   --cpus <limit>                 Container CPU limit
   --gpus <device>                GPU passthrough (e.g., "all"); requires NVIDIA Container Toolkit
   --ssh-port <port>              Host port for SSH (default: auto-assigned)
-  --agent <type>                 Agent to install and configure (e.g. claude, opencode)
+  --agent <type>                 Agent to install and configure (claude, goose)
   --docker                       Enable Docker-in-Docker via Sysbox runtime
 ```
 
@@ -190,11 +192,16 @@ agentic-dev-sandbox/
 │   ├── barrier-check.sh          Passive security posture checker
 │   ├── repo-watch-prompt.md      Prompt template for repo-watch
 │   ├── issue-commands.json       Slash command definitions for repo-watch
-│   └── claude/                   Claude Code agent-specific files
-│       ├── CLAUDE.md             Agent instructions
-│       ├── repo-watch.sh         Agentic loop: polls issues, invokes Claude Code
+│   ├── claude/                   Claude Code agent-specific files
+│   │   ├── CLAUDE.md             Agent instructions
+│   │   ├── repo-watch.sh         Agentic loop: polls issues, invokes Claude Code
+│   │   ├── agent-watch.sh        Real-time agent activity viewer
+│   │   └── setup.sh              Permissions bypass configuration
+│   └── goose/                    Goose agent-specific files
+│       ├── AGENTS.md             Agent instructions
+│       ├── repo-watch.sh         Agentic loop: polls issues, invokes Goose
 │       ├── agent-watch.sh        Real-time agent activity viewer
-│       └── setup.sh              Permissions bypass configuration
+│       └── setup.sh              Headless mode configuration
 ├── agent/
 │   ├── Dockerfile.python         Agent image: conda, git, byobu, sshd
 │   └── entrypoint.sh            Clone, configure git, start sshd + byobu (shared)
@@ -232,7 +239,7 @@ Happy to include missing alternatives, this field moves fast =)
 
 
 ## ◾ Roadmap
-- Script support for other agentic platforms besides Claude Code (Codex, opencode)
+- More agent platforms (Codex, opencode, etc.)
 - Podman support
 - Multi-user support
 
