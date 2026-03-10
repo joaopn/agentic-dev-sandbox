@@ -22,10 +22,11 @@ A simple, but opinionated, per-project sandboxed development environment for age
 python sandbox.py setup
 
 # 2. Create a sandboxed project with python and pre-install an agent
-python sandbox.py create https://github.com/you/myproject --profile python --agent claude  # or --agent goose
+python sandbox.py create https://github.com/you/myproject --profile python --agent claude 
 
 # 3. Enter the sandbox and code away
-## Authenticate your agent (claude / goose configure), F2/F3/F4 to manage windows, F6 to detach
+## Authenticate your agent (claude / goose configure)
+## byobu: F2/F3/F4 to manage windows, F6 to detach
 python sandbox.py attach myproject
 
 # 4. Fetch agent committed code (with optional security review)
@@ -222,24 +223,28 @@ agentic-dev-sandbox/
 ---
 
 ## ◾ Alternatives
-### [docker sandbox](https://docs.docker.com/ai/sandboxes/)
-- Uses a microVM, more secure than runc/sysbox against CVEs
-- Windows/OSX-only through Docker Desktop
-- no GPU support
 
-### [kata containers](https://github.com/kata-containers)
-- Uses a microVM, full GPU passthrough
-- cloud-native, high friction to configure and use on developer hardware
+With Git integration:
+#### [borenstein/yolo-cage](https://github.com/borenstein/yolo-cage)
+  - Similar idea
+  - Works directly on github
 
-### [borenstein/yolo-cage](https://github.com/borenstein/yolo-cage)
-- Similar idea as this
-- Works directly on github
+Pure containers:
+####  [docker sandbox](https://docs.docker.com/ai/sandboxes/)
+  - Uses a microVM, more secure than runc/sysbox against CVEs
+  - Windows/OSX-only through Docker Desktop
+  - no GPU support
+
+####  [kata containers](https://github.com/kata-containers)
+  - Uses a microVM, full GPU passthrough
+  - cloud-native, high friction to configure and use on developer hardware
+
+
 
 Happy to include missing alternatives, this field moves fast =)
 
 
 ## ◾ Roadmap
-- More agent platforms (Codex, opencode, etc.)
 - Podman support
 - Multi-user support
 

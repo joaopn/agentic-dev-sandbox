@@ -6,7 +6,8 @@
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
-        }
+        },
+        "goose": {}
       }
     },
     "/review": {
@@ -15,7 +16,8 @@
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
-        }
+        },
+        "goose": {}
       }
     },
     "/explain": {
@@ -24,7 +26,8 @@
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit,Bash"]
-        }
+        },
+        "goose": {}
       }
     },
     "/test": {
@@ -33,7 +36,8 @@
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
-        }
+        },
+        "goose": {}
       }
     },
     "/search": {
@@ -43,7 +47,8 @@
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
-        }
+        },
+        "goose": {}
       }
     },
     "/security": {
@@ -53,18 +58,27 @@
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
-        }
+        },
+        "goose": {}
       }
     },
     "/fix": {
       "_comment": "Inspired by https://github.com/wshobson/commands (MIT license)",
       "description": "Diagnose and fix a specific bug or error",
-      "task_prefix": "BUGFIX MODE. Diagnose the reported bug or error systematically:\n1) Reproduce or locate the issue — find the relevant code and understand the failure\n2) Identify root cause — trace the execution path, check inputs/outputs, examine error messages\n3) Apply a minimal, targeted fix — change only what is necessary to resolve the issue\n4) Verify the fix — run existing tests if available, confirm the fix addresses the root cause\n5) Post a summary of what you found and what you changed as a comment on the issue\n\nDo NOT refactor surrounding code or make unrelated improvements. Keep the fix focused and minimal."
+      "task_prefix": "BUGFIX MODE. Diagnose the reported bug or error systematically:\n1) Reproduce or locate the issue — find the relevant code and understand the failure\n2) Identify root cause — trace the execution path, check inputs/outputs, examine error messages\n3) Apply a minimal, targeted fix — change only what is necessary to resolve the issue\n4) Verify the fix — run existing tests if available, confirm the fix addresses the root cause\n5) Post a summary of what you found and what you changed as a comment on the issue\n\nDo NOT refactor surrounding code or make unrelated improvements. Keep the fix focused and minimal.",
+      "agents": {
+        "claude": {},
+        "goose": {}
+      }
     },
     "/refactor": {
       "_comment": "Inspired by https://github.com/wshobson/commands (MIT license)",
       "description": "Improve code quality without changing behavior",
-      "task_prefix": "REFACTORING MODE. Improve code quality while preserving existing behavior:\n1) Analyze the target code for: code smells (long methods, duplication, magic numbers, poor naming), SOLID violations, and unnecessary complexity\n2) Prioritize improvements: start with high-impact/low-effort changes (extract constants, rename for clarity), then method extraction and decomposition\n3) Apply refactoring — ensure all changes preserve the existing behavior. Do NOT add new features or change functionality\n4) Verify: run existing tests if available. If tests break, the refactoring introduced a bug — fix it\n5) Post a summary of changes with before/after comparison as a comment on the issue"
+      "task_prefix": "REFACTORING MODE. Improve code quality while preserving existing behavior:\n1) Analyze the target code for: code smells (long methods, duplication, magic numbers, poor naming), SOLID violations, and unnecessary complexity\n2) Prioritize improvements: start with high-impact/low-effort changes (extract constants, rename for clarity), then method extraction and decomposition\n3) Apply refactoring — ensure all changes preserve the existing behavior. Do NOT add new features or change functionality\n4) Verify: run existing tests if available. If tests break, the refactoring introduced a bug — fix it\n5) Post a summary of changes with before/after comparison as a comment on the issue",
+      "agents": {
+        "claude": {},
+        "goose": {}
+      }
     },
     "/deps": {
       "_comment": "Inspired by https://github.com/wshobson/commands (MIT license)",
@@ -73,7 +87,8 @@
       "agents": {
         "claude": {
           "flags": ["--disallowedTools", "Edit,Write,NotebookEdit"]
-        }
+        },
+        "goose": {}
       }
     }
   }
