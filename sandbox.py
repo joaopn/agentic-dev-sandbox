@@ -230,7 +230,11 @@ def get_agent_containers() -> list[str]:
 
 
 def container_exists(name: str) -> bool:
-    return run_quiet(["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=^{name}$"])
+    r = subprocess.run(
+        ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=^{name}$"],
+        capture_output=True, text=True,
+    )
+    return r.returncode == 0 and bool(r.stdout.strip())
 
 
 def container_running(name: str) -> bool:
@@ -560,6 +564,76 @@ def remove_agent_network(project: str) -> None:
     for svc in ["sandbox-gitea", "sandbox-router"]:
         run(["docker", "network", "disconnect", network, svc], capture_output=True)
     run(["docker", "network", "rm", network], capture_output=True)
+
+
+PORT_FORWARDER_IMAGE = "sandbox-router:latest"
+
+
+def port_forwarder_name(project: str) -> str:
+    return f"sandbox-port-{project}"
+
+
+def read_port_state(project: str) -> tuple[str, list[tuple[int, int]]]:
+    """Return (bind_ip, [(host_port, cont_port)]) for this project's forwarder.
+    Returns ("", []) if no forwarder is running."""
+    name = port_forwarder_name(project)
+    if not container_exists(name):
+        return "", []
+    r = run(["docker", "inspect", name, "-f",
+             '{{index .Config.Labels "sandbox.bind"}}\t'
+             '{{index .Config.Labels "sandbox.mappings"}}'],
+            capture_output=True, text=True)
+    parts = r.stdout.strip().split("\t")
+    bind = parts[0] if parts and parts[0] else "127.0.0.1"
+    mappings_str = parts[1] if len(parts) > 1 else ""
+    mappings = []
+    for m in mappings_str.split(",") if mappings_str else []:
+        h, c = m.split(":")
+        mappings.append((int(h), int(c)))
+    return bind, mappings
+
+
+def apply_port_state(project: str, bind: str, mappings: list[tuple[int, int]]) -> None:
+    """Replace the project's forwarder with one publishing the given mappings.
+    If mappings is empty, the forwarder is removed.
+
+    The forwarder is attached to dev-sandbox (so it can publish to the host)
+    and to the project's internal net (so it can resolve the agent by name).
+    """
+    name = port_forwarder_name(project)
+    project_net = f"sandbox-net-{project}"
+    agent = f"sandbox-agent-{project}"
+
+    if container_exists(name):
+        run(["docker", "rm", "-f", name], capture_output=True)
+
+    if not mappings:
+        return
+
+    socat_chain = " ".join(
+        f"socat TCP-LISTEN:{h},fork,reuseaddr TCP:{agent}:{c} &"
+        for h, c in mappings
+    ) + " wait"
+
+    args = ["docker", "run", "-d", "--rm",
+            "--name", name,
+            "--network", "dev-sandbox",
+            "--label", f"sandbox.project={project}",
+            "--label", "sandbox.port-forwarder=true",
+            "--label", f"sandbox.bind={bind}",
+            "--label", "sandbox.mappings=" + ",".join(f"{h}:{c}" for h, c in mappings)]
+    for h, _ in mappings:
+        args += ["-p", f"{bind}:{h}:{h}"]
+    args += ["--entrypoint", "sh", PORT_FORWARDER_IMAGE, "-c", socat_chain]
+    run_check(args)
+    run_check(["docker", "network", "connect", project_net, name])
+
+
+def remove_port_forwarder(project: str) -> None:
+    """Tear down the project's port forwarder (used by destroy)."""
+    name = port_forwarder_name(project)
+    if container_exists(name):
+        run(["docker", "rm", "-f", name], capture_output=True)
 
 
 def update_env_key(key: str, value: str) -> None:
@@ -1378,12 +1452,16 @@ def cmd_status(args: argparse.Namespace) -> None:
             parts = r.stdout.strip().split("\t") if r.returncode == 0 else ["?", ""]
             state = parts[0] if parts else "?"
             ssh_port = parts[1] if len(parts) > 1 and parts[1] else "-"
-            rows.append((project_name, state, ssh_port))
+            b, ms = read_port_state(project_name)
+            ports = f"{b} -> {','.join(str(h) for h, _ in ms)}" if ms else "-"
+            rows.append((project_name, state, ssh_port, ports))
         name_width = max(len(r[0]) for r in rows) + 4
         name_width = max(name_width, len("PROJECT"))
-        print(f"  {'PROJECT':<{name_width}s}  {'STATE':<10s}  SSH PORT")
-        for project_name, state, ssh_port in rows:
-            print(f"  {project_name:<{name_width}s}  {state:<10s}  {ssh_port}")
+        ports_width = max((len(r[3]) for r in rows), default=0)
+        ports_width = max(ports_width, len("PORTS"))
+        print(f"  {'PROJECT':<{name_width}s}  {'STATE':<10s}  {'SSH PORT':<10s}  {'PORTS':<{ports_width}s}")
+        for project_name, state, ssh_port, ports in rows:
+            print(f"  {project_name:<{name_width}s}  {state:<10s}  {ssh_port:<10s}  {ports:<{ports_width}s}")
 
     if cfg.projects_dir:
         print(f"\n── Projects Directory ──\n  {cfg.projects_dir}")
@@ -1394,6 +1472,67 @@ def cmd_status(args: argparse.Namespace) -> None:
                     print(f"    {d.name}/")
     else:
         print("\n── Projects Directory ──\n  (standard Docker volumes)")
+
+
+def cmd_port(args: argparse.Namespace) -> None:
+    project = args.project
+    agent = f"sandbox-agent-{project}"
+    network = f"sandbox-net-{project}"
+    cur_bind, mappings = read_port_state(project)
+
+    if args.list:
+        if not mappings:
+            print(f"No open ports for {project}.")
+            return
+        print(f"  bind: {cur_bind}")
+        print(f"  {'HOST':<8s}  CONTAINER")
+        for h, c in mappings:
+            print(f"  {h:<8d}  {c}")
+        return
+
+    if args.stop:
+        if not mappings:
+            print(f"No port forwarder running for {project}.")
+            return
+        remove_port_forwarder(project)
+        print(f"Stopped port forwarder for {project}.")
+        return
+
+    if args.close is not None:
+        new_mappings = [(h, c) for h, c in mappings if h != args.close]
+        if len(new_mappings) == len(mappings):
+            die(f"Port {args.close} not open on {project}.")
+        apply_port_state(project, cur_bind, new_mappings)
+        if new_mappings:
+            print(f"Closed {args.close} on {project}.")
+        else:
+            print(f"Closed {args.close}; no ports remaining, forwarder stopped.")
+        return
+
+    # --open
+    try:
+        host_str, cont_str = args.open.split(":", 1)
+        host_port, cont_port = int(host_str), int(cont_str)
+    except ValueError:
+        die("--open expects HOST:CONTAINER (e.g. 8080:8080).")
+
+    if not container_exists(agent):
+        die(f"Container {agent} not found.")
+    if not run_quiet(["docker", "network", "inspect", network]):
+        die(f"Network {network} not found.")
+    if any(h == host_port for h, _ in mappings):
+        die(f"Host port {host_port} already mapped on {project}.")
+
+    if mappings:
+        if args.bind and args.bind != cur_bind:
+            die(f"Existing forwarder for {project} binds to {cur_bind}; "
+                f"--close all ports first to rebind.")
+        bind = cur_bind
+    else:
+        bind = args.bind or "127.0.0.1"
+
+    apply_port_state(project, bind, mappings + [(host_port, cont_port)])
+    print(f"Opened http://{bind}:{host_port} -> {agent}:{cont_port}")
 
 
 def cmd_destroy(args: argparse.Namespace) -> None:
@@ -1416,6 +1555,8 @@ def cmd_destroy(args: argparse.Namespace) -> None:
         return
 
     print(f"\nDestroying sandbox: {project}...")
+
+    remove_port_forwarder(project)
 
     if container_exists(container_name):
         print("Removing container...")
@@ -1671,6 +1812,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("destroy", help="Remove container, volume, Gitea user + fork")
     p.add_argument("project")
     p.set_defaults(func=cmd_destroy)
+
+    p = sub.add_parser("port", help="Manage the project's port forwarder")
+    p.add_argument("project")
+    p.add_argument("--bind", default=None, metavar="IP",
+                   help="Host IP to bind on (default: 127.0.0.1; only honored when starting a fresh forwarder)")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--open", metavar="HOST:CONTAINER",
+                   help="Add a HOST:CONTAINER mapping (restarts forwarder)")
+    g.add_argument("--close", metavar="HOST", type=int,
+                   help="Remove a HOST mapping (restarts forwarder, or stops it if last)")
+    g.add_argument("--list", action="store_true",
+                   help="List current mappings for this project")
+    g.add_argument("--stop", action="store_true",
+                   help="Stop the forwarder, removing all mappings")
+    p.set_defaults(func=cmd_port)
 
     p = sub.add_parser("logs", help="Tail container logs")
     p.add_argument("project")
