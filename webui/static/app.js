@@ -359,6 +359,56 @@ function renderDashboard() {
     schedulePolling();
 }
 
+// ---- search bar ------------------------------------------------------------
+
+let searchBarEl = null;
+let searchInputEl = null;
+
+function ensureSearchBar() {
+    if (searchBarEl) return searchBarEl;
+    const input = el("input", { type: "text", placeholder: "Search…", spellcheck: "false" });
+    const prev = el("button", { class: "search-btn", title: "Previous (Shift+Enter)" }, ["↑"]);
+    const next = el("button", { class: "search-btn", title: "Next (Enter)" }, ["↓"]);
+    const close = el("button", { class: "search-btn", title: "Close (Esc)" }, ["×"]);
+
+    const bar = el("div", { class: "search-bar hidden" }, [input, prev, next, close]);
+
+    const find = (forward) => {
+        const t = state.terminals[state.activeTab];
+        if (!t || !t.searchAddon || !input.value) return;
+        const opts = { regex: false, wholeWord: false, caseSensitive: false };
+        if (forward) t.searchAddon.findNext(input.value, opts);
+        else t.searchAddon.findPrevious(input.value, opts);
+    };
+    input.oninput = () => find(true);
+    input.onkeydown = (e) => {
+        if (e.key === "Enter") { find(!e.shiftKey); e.preventDefault(); }
+        else if (e.key === "Escape") { closeSearchBar(); e.preventDefault(); }
+    };
+    next.onclick = () => find(true);
+    prev.onclick = () => find(false);
+    close.onclick = closeSearchBar;
+
+    searchBarEl = bar;
+    searchInputEl = input;
+    return bar;
+}
+
+function openSearchBar() {
+    const bar = ensureSearchBar();
+    const termArea = document.getElementById("terminal-area");
+    if (termArea && bar.parentElement !== termArea) termArea.appendChild(bar);
+    bar.classList.remove("hidden");
+    searchInputEl.focus();
+    searchInputEl.select();
+}
+
+function closeSearchBar() {
+    if (searchBarEl) searchBarEl.classList.add("hidden");
+    const t = state.terminals[state.activeTab];
+    if (t && t.term) t.term.focus();
+}
+
 function makeThemeSelector() {
     const sel = document.createElement("select");
     sel.className = "theme-select";
@@ -549,18 +599,59 @@ function openTerminal(project) {
         fontFamily: "ui-monospace, Menlo, Consolas, monospace",
         fontSize: 13,
         theme: currentXtermTheme(),
+        scrollback: 5000,
     });
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
+    term.loadAddon(new WebLinksAddon.WebLinksAddon(
+        (event, uri) => window.open(uri, "_blank", "noopener,noreferrer"),
+    ));
+    const searchAddon = new SearchAddon.SearchAddon();
+    term.loadAddon(searchAddon);
     term.open(container);
+    try {
+        const webgl = new WebglAddon.WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        term.loadAddon(webgl);
+    } catch (_) {
+        // WebGL unavailable; xterm falls back to canvas/DOM renderer.
+    }
     fitAddon.fit();
     term.focus();
+    term.attachCustomKeyEventHandler((ev) => {
+        if (ev.type === "keydown" && ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey
+            && (ev.key === "f" || ev.key === "F")) {
+            ev.preventDefault();
+            openSearchBar();
+            return false;
+        }
+        return true;
+    });
+    term.onSelectionChange(() => {
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+    });
+    // OSC 52 — tmux/byobu (with set-clipboard on) emits this after every copy,
+    // which lets users copy from inside mouse mode without bypassing it.
+    term.parser.registerOscHandler(52, (data) => {
+        const semi = data.indexOf(";");
+        if (semi < 0) return false;
+        const payload = data.slice(semi + 1);
+        if (payload === "?") return true; // query — silently ignored for security
+        try {
+            const text = atob(payload);
+            if (text) navigator.clipboard.writeText(text).catch(() => {});
+            return true;
+        } catch (_) {
+            return false;
+        }
+    });
 
     const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${wsProto}//${location.host}/tab`);
     ws.binaryType = "arraybuffer";
 
-    state.terminals[project.name] = { term, fitAddon, ws, container, project };
+    state.terminals[project.name] = { term, fitAddon, searchAddon, ws, container, project };
 
     ws.onopen = () => {
         ws.send(JSON.stringify({

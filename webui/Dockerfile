@@ -12,10 +12,16 @@ RUN pip install --no-cache-dir \
 # runtime internet dependency.
 ARG XTERM_VERSION=5.3.0
 ARG FIT_VERSION=0.8.0
+ARG WEB_LINKS_VERSION=0.9.0
+ARG WEBGL_VERSION=0.16.0
+ARG SEARCH_VERSION=0.13.0
 WORKDIR /app/static/vendor
 RUN wget -q https://unpkg.com/xterm@${XTERM_VERSION}/lib/xterm.js \
  && wget -q https://unpkg.com/xterm@${XTERM_VERSION}/css/xterm.css \
- && wget -q https://unpkg.com/xterm-addon-fit@${FIT_VERSION}/lib/xterm-addon-fit.js
+ && wget -q https://unpkg.com/xterm-addon-fit@${FIT_VERSION}/lib/xterm-addon-fit.js \
+ && wget -q https://unpkg.com/xterm-addon-web-links@${WEB_LINKS_VERSION}/lib/xterm-addon-web-links.js \
+ && wget -q https://unpkg.com/xterm-addon-webgl@${WEBGL_VERSION}/lib/xterm-addon-webgl.js \
+ && wget -q https://unpkg.com/xterm-addon-search@${SEARCH_VERSION}/lib/xterm-addon-search.js
 
 WORKDIR /app
 COPY server.py .

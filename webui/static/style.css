@@ -214,6 +214,51 @@ body {
     font-size: 14px;
 }
 
+/* Search bar overlay */
+.search-bar {
+    position: absolute;
+    top: 8px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    z-index: 10;
+}
+.search-bar.hidden { display: none; }
+.search-bar input {
+    background: var(--bg-input);
+    color: var(--fg-base);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 13px;
+    font-family: inherit;
+    width: 220px;
+}
+.search-bar input:focus {
+    outline: none;
+    border-color: var(--bg-input-focus-border);
+}
+.search-bar .search-btn {
+    background: transparent;
+    color: var(--fg-muted);
+    border: none;
+    padding: 2px 6px;
+    cursor: pointer;
+    font-size: 14px;
+    border-radius: 3px;
+    line-height: 1;
+}
+.search-bar .search-btn:hover {
+    background: var(--border);
+    color: var(--fg-base);
+}
+
 /* Modal */
 .modal-backdrop {
     position: fixed;
