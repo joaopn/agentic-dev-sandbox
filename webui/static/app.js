@@ -4,8 +4,172 @@
 // JS memory only while unlocked; both are dropped on lock or refresh.
 
 const VAULT_KEY = "sandbox-webui-vault";
+const THEME_KEY = "sandbox-webui-theme";
 const PBKDF2_ITERATIONS = 600000;
 const PROBE_INTERVAL_MS = 15000;
+
+// ---- themes -----------------------------------------------------------------
+//
+// Each theme provides:
+//   xterm: an ITheme passed to the xterm.js terminal
+//   css:   CSS variables applied to document.documentElement
+// Page chrome and terminal stay in the same family — never invert.
+
+const THEMES = {
+    dark: {
+        label: "Dark",
+        xterm: {
+            background: "#000000", foreground: "#e0e0e0",
+            cursor: "#e0e0e0", cursorAccent: "#000000",
+            selectionBackground: "rgba(255,255,255,0.25)",
+            black: "#000000", red: "#cc0403", green: "#19cb00", yellow: "#cecb00",
+            blue: "#0d73cc", magenta: "#cb1ed1", cyan: "#0dcdcd", white: "#dddddd",
+            brightBlack: "#767676", brightRed: "#f2201f", brightGreen: "#23fd00",
+            brightYellow: "#fffd00", brightBlue: "#1a8fff", brightMagenta: "#fd28ff",
+            brightCyan: "#14ffff", brightWhite: "#ffffff",
+        },
+        css: {
+            "--bg-base": "#1e1e1e", "--bg-card": "#2a2a2a", "--bg-active": "#1e1e1e",
+            "--bg-input": "#1a1a1a", "--bg-input-focus-border": "#6c9",
+            "--fg-base": "#e0e0e0", "--fg-muted": "#aaa", "--fg-faint": "#777",
+            "--fg-accent": "#6c9",
+            "--border": "#444", "--border-strong": "#555",
+            "--btn-bg": "#4a7c4e", "--btn-bg-hover": "#5a8c5e",
+            "--btn-secondary-bg": "#444", "--btn-secondary-bg-hover": "#555",
+            "--btn-danger-bg": "#7c3a3a", "--btn-danger-bg-hover": "#8c4a4a",
+            "--error-fg": "#e88",
+            "--status-up": "#6c6", "--status-down": "#555", "--status-error": "#e66",
+            "--terminal-bg": "#000", "--terminal-fg": "#e0e0e0",
+        },
+    },
+    light: {
+        label: "Light",
+        xterm: {
+            background: "#ffffff", foreground: "#2a2a2a",
+            cursor: "#2a2a2a", cursorAccent: "#ffffff",
+            selectionBackground: "rgba(0,0,0,0.18)",
+            black: "#2a2a2a", red: "#c91b00", green: "#00c200", yellow: "#c7c400",
+            blue: "#0225c7", magenta: "#ca30c7", cyan: "#00c5c7", white: "#c7c7c7",
+            brightBlack: "#676767", brightRed: "#ff6e67", brightGreen: "#5ffa68",
+            brightYellow: "#fffc67", brightBlue: "#6871ff", brightMagenta: "#ff77ff",
+            brightCyan: "#60fdff", brightWhite: "#ffffff",
+        },
+        css: {
+            "--bg-base": "#fafafa", "--bg-card": "#ececec", "--bg-active": "#ffffff",
+            "--bg-input": "#ffffff", "--bg-input-focus-border": "#3a8a3a",
+            "--fg-base": "#1f1f1f", "--fg-muted": "#555", "--fg-faint": "#888",
+            "--fg-accent": "#3a8a3a",
+            "--border": "#d0d0d0", "--border-strong": "#bbb",
+            "--btn-bg": "#3a8a3a", "--btn-bg-hover": "#4a9a4a",
+            "--btn-secondary-bg": "#d0d0d0", "--btn-secondary-bg-hover": "#bbb",
+            "--btn-danger-bg": "#b03a3a", "--btn-danger-bg-hover": "#c04a4a",
+            "--error-fg": "#a33",
+            "--status-up": "#3a8a3a", "--status-down": "#aaa", "--status-error": "#c04040",
+            "--terminal-bg": "#ffffff", "--terminal-fg": "#2a2a2a",
+        },
+    },
+    "solarized-dark": {
+        label: "Solarized Dark",
+        xterm: {
+            background: "#002b36", foreground: "#839496",
+            cursor: "#93a1a1", cursorAccent: "#002b36",
+            selectionBackground: "rgba(147,161,161,0.25)",
+            black: "#073642", red: "#dc322f", green: "#859900", yellow: "#b58900",
+            blue: "#268bd2", magenta: "#d33682", cyan: "#2aa198", white: "#eee8d5",
+            brightBlack: "#002b36", brightRed: "#cb4b16", brightGreen: "#586e75",
+            brightYellow: "#657b83", brightBlue: "#839496", brightMagenta: "#6c71c4",
+            brightCyan: "#93a1a1", brightWhite: "#fdf6e3",
+        },
+        css: {
+            "--bg-base": "#002b36", "--bg-card": "#073642", "--bg-active": "#002b36",
+            "--bg-input": "#001f27", "--bg-input-focus-border": "#268bd2",
+            "--fg-base": "#93a1a1", "--fg-muted": "#839496", "--fg-faint": "#657b83",
+            "--fg-accent": "#2aa198",
+            "--border": "#0a4452", "--border-strong": "#0e5a6f",
+            "--btn-bg": "#268bd2", "--btn-bg-hover": "#3a9be0",
+            "--btn-secondary-bg": "#0a4452", "--btn-secondary-bg-hover": "#0e5a6f",
+            "--btn-danger-bg": "#dc322f", "--btn-danger-bg-hover": "#ec4240",
+            "--error-fg": "#dc322f",
+            "--status-up": "#859900", "--status-down": "#586e75", "--status-error": "#dc322f",
+            "--terminal-bg": "#002b36", "--terminal-fg": "#839496",
+        },
+    },
+    dracula: {
+        label: "Dracula",
+        xterm: {
+            background: "#282a36", foreground: "#f8f8f2",
+            cursor: "#f8f8f2", cursorAccent: "#282a36",
+            selectionBackground: "rgba(68,71,90,0.7)",
+            black: "#21222c", red: "#ff5555", green: "#50fa7b", yellow: "#f1fa8c",
+            blue: "#bd93f9", magenta: "#ff79c6", cyan: "#8be9fd", white: "#f8f8f2",
+            brightBlack: "#6272a4", brightRed: "#ff6e6e", brightGreen: "#69ff94",
+            brightYellow: "#ffffa5", brightBlue: "#d6acff", brightMagenta: "#ff92df",
+            brightCyan: "#a4ffff", brightWhite: "#ffffff",
+        },
+        css: {
+            "--bg-base": "#282a36", "--bg-card": "#343746", "--bg-active": "#282a36",
+            "--bg-input": "#21222c", "--bg-input-focus-border": "#bd93f9",
+            "--fg-base": "#f8f8f2", "--fg-muted": "#bdbdc8", "--fg-faint": "#6272a4",
+            "--fg-accent": "#bd93f9",
+            "--border": "#44475a", "--border-strong": "#5c5f74",
+            "--btn-bg": "#50fa7b", "--btn-bg-hover": "#69ff94",
+            "--btn-secondary-bg": "#44475a", "--btn-secondary-bg-hover": "#5c5f74",
+            "--btn-danger-bg": "#ff5555", "--btn-danger-bg-hover": "#ff6e6e",
+            "--error-fg": "#ff5555",
+            "--status-up": "#50fa7b", "--status-down": "#6272a4", "--status-error": "#ff5555",
+            "--terminal-bg": "#282a36", "--terminal-fg": "#f8f8f2",
+        },
+    },
+    nord: {
+        label: "Nord",
+        xterm: {
+            background: "#2e3440", foreground: "#d8dee9",
+            cursor: "#d8dee9", cursorAccent: "#2e3440",
+            selectionBackground: "rgba(76,86,106,0.7)",
+            black: "#3b4252", red: "#bf616a", green: "#a3be8c", yellow: "#ebcb8b",
+            blue: "#81a1c1", magenta: "#b48ead", cyan: "#88c0d0", white: "#e5e9f0",
+            brightBlack: "#4c566a", brightRed: "#bf616a", brightGreen: "#a3be8c",
+            brightYellow: "#ebcb8b", brightBlue: "#81a1c1", brightMagenta: "#b48ead",
+            brightCyan: "#8fbcbb", brightWhite: "#eceff4",
+        },
+        css: {
+            "--bg-base": "#2e3440", "--bg-card": "#3b4252", "--bg-active": "#2e3440",
+            "--bg-input": "#272c36", "--bg-input-focus-border": "#88c0d0",
+            "--fg-base": "#d8dee9", "--fg-muted": "#a8b2c1", "--fg-faint": "#7884a0",
+            "--fg-accent": "#88c0d0",
+            "--border": "#434c5e", "--border-strong": "#4c566a",
+            "--btn-bg": "#5e81ac", "--btn-bg-hover": "#7592b8",
+            "--btn-secondary-bg": "#434c5e", "--btn-secondary-bg-hover": "#4c566a",
+            "--btn-danger-bg": "#bf616a", "--btn-danger-bg-hover": "#cf717a",
+            "--error-fg": "#bf616a",
+            "--status-up": "#a3be8c", "--status-down": "#4c566a", "--status-error": "#bf616a",
+            "--terminal-bg": "#2e3440", "--terminal-fg": "#d8dee9",
+        },
+    },
+};
+
+const DEFAULT_THEME = "dark";
+
+function loadStoredTheme() {
+    const id = localStorage.getItem(THEME_KEY);
+    return THEMES[id] ? id : DEFAULT_THEME;
+}
+
+function applyTheme(id) {
+    const theme = THEMES[id] || THEMES[DEFAULT_THEME];
+    for (const [k, v] of Object.entries(theme.css)) {
+        document.documentElement.style.setProperty(k, v);
+    }
+    for (const t of Object.values(state.terminals)) {
+        if (t.term) t.term.options.theme = theme.xterm;
+    }
+    state.theme = id;
+    localStorage.setItem(THEME_KEY, id);
+}
+
+function currentXtermTheme() {
+    return THEMES[state.theme || DEFAULT_THEME].xterm;
+}
 
 const state = {
     derivedKey: null,   // CryptoKey | null
@@ -14,6 +178,7 @@ const state = {
     activeTab: null,    // string | null
     terminals: {},      // name -> { term, fitAddon, ws, container, project }
     probeTimer: null,
+    theme: null,        // theme id; set by applyTheme on boot
 };
 
 // ---- utilities -------------------------------------------------------------
@@ -179,6 +344,7 @@ function renderDashboard() {
     }
     tabbar.appendChild(el("div", { class: "tab add", onclick: openAddProjectModal }, ["+ Add project"]));
     tabbar.appendChild(el("div", { class: "spacer" }));
+    tabbar.appendChild(makeThemeSelector());
     tabbar.appendChild(el("button", { class: "lock-btn", onclick: lockVault }, ["Lock"]));
 
     const termArea = el("div", { class: "terminal-area", id: "terminal-area" });
@@ -191,6 +357,21 @@ function renderDashboard() {
     document.body.appendChild(el("div", { id: "app" }, [dashboard]));
 
     schedulePolling();
+}
+
+function makeThemeSelector() {
+    const sel = document.createElement("select");
+    sel.className = "theme-select";
+    sel.title = "Theme";
+    for (const [id, t] of Object.entries(THEMES)) {
+        const opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = t.label;
+        if (id === state.theme) opt.selected = true;
+        sel.appendChild(opt);
+    }
+    sel.onchange = () => applyTheme(sel.value);
+    return sel;
 }
 
 function makeTabEl(project) {
@@ -367,7 +548,7 @@ function openTerminal(project) {
         cursorBlink: true,
         fontFamily: "ui-monospace, Menlo, Consolas, monospace",
         fontSize: 13,
-        theme: { background: "#000", foreground: "#e0e0e0" },
+        theme: currentXtermTheme(),
     });
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
@@ -464,6 +645,7 @@ async function handleControl(project, term, ws, ctrl) {
 // ---- bootstrap -------------------------------------------------------------
 
 window.addEventListener("DOMContentLoaded", () => {
+    applyTheme(loadStoredTheme());
     if (loadStored()) renderUnlock();
     else renderSetup();
 });
