@@ -49,10 +49,28 @@ services:
       - router-rules:/etc/sandbox/rules
     restart: unless-stopped
 
+  webui:
+    build: ./webui
+    image: sandbox-webui:latest
+    container_name: sandbox-webui
+    networks:
+      - dev-sandbox
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - WEBUI_BIND=${WEBUI_BIND:-127.0.0.1}
+    ports:
+      - "${WEBUI_BIND:-127.0.0.1}:${WEBUI_PORT:-7777}:7777"
+    volumes:
+      - webui-tls:/app/tls
+    restart: unless-stopped
+    profiles: ["webui"]
+
 
 volumes:
   gitea-data:
   router-rules:
+  webui-tls:
 
 networks:
   # Infrastructure network: has internet access via Docker gateway.

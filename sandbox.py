@@ -552,6 +552,9 @@ def ensure_agent_network(project: str, cfg: Config, open_egress: bool = False) -
     # Connect infrastructure services (ignore errors if already connected)
     for svc in ["sandbox-gitea", "sandbox-router"]:
         run(["docker", "network", "connect", network, svc], capture_output=True)
+    if container_exists("sandbox-webui"):
+        run(["docker", "network", "connect", network, "sandbox-webui"],
+            capture_output=True)
     router_ip = get_router_ip(network)
     apply_firewall_rules(network, open_egress)
     return network, router_ip
@@ -561,7 +564,7 @@ def remove_agent_network(project: str) -> None:
     """Remove firewall rules, disconnect infrastructure, and remove per-project network."""
     network = f"sandbox-net-{project}"
     remove_firewall_rules(network)
-    for svc in ["sandbox-gitea", "sandbox-router"]:
+    for svc in ["sandbox-gitea", "sandbox-router", "sandbox-webui"]:
         run(["docker", "network", "disconnect", network, svc], capture_output=True)
     run(["docker", "network", "rm", network], capture_output=True)
 
@@ -1024,6 +1027,7 @@ def cmd_create(args: argparse.Namespace) -> None:
     egress_label = "open (all ports)" if open_egress else "locked (80/443/DNS only)"
     docker_label = " (Docker-in-Docker)" if args.docker else ""
     branch_label = f"\nBase branch: {base_branch}" if base_branch else ""
+    webui_import = _webui_import_string(project, ssh_pass)
     print(f"""
 === Sandbox ready: {project} ==={docker_label}
 Attach:    sandbox attach {project}
@@ -1031,6 +1035,8 @@ SSH:       ssh agent@localhost -p {ssh_port}  (password: {ssh_pass})
 Gitea:     http://localhost:{cfg.gitea_port}/{gitea_user}/{project}
 Gitea login: sandbox-admin / {cfg.gitea_admin_password}
 Egress:    {egress_label}{branch_label}
+WebUI import string (paste into the webui's Add project dialog):
+  {webui_import}
 
 To review agent work from your real repo:
   python fetch-sandbox.py <repo-path> <branch-name>""")
@@ -1730,12 +1736,150 @@ def cmd_up(args: argparse.Namespace) -> None:
 
 
 def cmd_down(args: argparse.Namespace) -> None:
-    """Stop infrastructure and CI watch."""
+    """Stop infrastructure, CI watch, and webui."""
     _run_ci_watch("stop")
+
+    if container_exists("sandbox-webui"):
+        print("Stopping webui...")
+        run(["docker", "rm", "-f", "sandbox-webui"], capture_output=True)
 
     print("Stopping infrastructure...")
     docker_compose("down")
     print("Infrastructure is down.")
+
+
+def _agent_ssh_info(project: str) -> tuple[str, str] | None:
+    """Return (ssh_port, ssh_password) for an existing agent, or None."""
+    container = f"sandbox-agent-{project}"
+    if not container_exists(container):
+        return None
+    r = run(["docker", "inspect", container, "-f",
+             '{{range $p, $binds := .HostConfig.PortBindings}}'
+             '{{range $binds}}{{.HostPort}}{{end}}{{end}}'],
+            capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    ssh_port = r.stdout.strip()
+    r = run(["docker", "inspect", container, "-f",
+             '{{range .Config.Env}}{{println .}}{{end}}'],
+            capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    ssh_pass = None
+    for line in r.stdout.splitlines():
+        if line.startswith("SSH_PASSWORD="):
+            ssh_pass = line.split("=", 1)[1]
+            break
+    if not ssh_pass:
+        return None
+    return ssh_port, ssh_pass
+
+
+def _webui_import_string(project: str, ssh_pass: str) -> str:
+    """Build the base64 import string for the webui.
+
+    Uses the agent container's name on its per-project network and the
+    internal SSH port (22), so the webui SSHes via the project net rather
+    than via the host's published port.
+    """
+    return base64.b64encode(json.dumps({
+        "name": project,
+        "host": f"sandbox-agent-{project}",
+        "port": 22,
+        "username": "agent",
+        "password": ssh_pass,
+    }).encode()).decode()
+
+
+def wire_webui_to_projects() -> None:
+    """Connect sandbox-webui to every existing per-project network."""
+    if not container_exists("sandbox-webui"):
+        return
+    r = run(["docker", "network", "ls",
+             "--filter", "name=^sandbox-net-",
+             "--format", "{{.Name}}"],
+            capture_output=True, text=True)
+    for net in r.stdout.strip().splitlines():
+        if net:
+            run(["docker", "network", "connect", net, "sandbox-webui"],
+                capture_output=True)
+
+
+def cmd_webui(args: argparse.Namespace) -> None:
+    """Manage the optional webui container (start / stop / status / import)."""
+    action = args.webui_action
+    port = read_env_value("WEBUI_PORT") or "7777"
+    bind = read_env_value("WEBUI_BIND") or "127.0.0.1"
+
+    if action == "import":
+        target = getattr(args, "project", None)
+        if target:
+            info = _agent_ssh_info(target)
+            if not info:
+                die(f"Agent {target} not found or missing SSH info.")
+            _, ssh_pass = info
+            print(_webui_import_string(target, ssh_pass))
+            return
+        containers = get_agent_containers()
+        if not containers:
+            print("No agent containers found.")
+            return
+        rows = []
+        for c in containers:
+            p = c.removeprefix("sandbox-agent-")
+            info = _agent_ssh_info(p)
+            if info:
+                rows.append((p, _webui_import_string(p, info[1])))
+        if not rows:
+            print("No agent containers with SSH info available.")
+            return
+        name_w = max(len(p) for p, _ in rows)
+        for p, s in rows:
+            print(f"{p.ljust(name_w)}  {s}")
+        return
+
+    if action == "start":
+        new_bind = getattr(args, "bind", None)
+        if new_bind and new_bind != bind:
+            update_env_key("WEBUI_BIND", new_bind)
+            bind = new_bind
+            if container_running("sandbox-webui"):
+                print(f"Bind changed to {new_bind}; restarting webui...")
+                run(["docker", "rm", "-f", "sandbox-webui"], capture_output=True)
+        if container_running("sandbox-webui"):
+            wire_webui_to_projects()
+            print(f"WebUI already running at https://{bind}:{port}")
+            return
+        if container_exists("sandbox-webui"):
+            run(["docker", "rm", "-f", "sandbox-webui"], capture_output=True)
+        if not run_quiet(["docker", "image", "inspect", "sandbox-webui:latest"]):
+            print("Building webui image...")
+            docker_compose("--profile", "webui", "build", "webui")
+        print(f"Starting webui (bind {bind}:{port})...")
+        docker_compose("--profile", "webui", "up", "-d", "webui")
+        wire_webui_to_projects()
+        print(f"WebUI:  https://{bind}:{port}")
+        print(f"  (self-signed cert — your browser will warn on first visit; click through)")
+        return
+
+    if action == "stop":
+        if not container_exists("sandbox-webui"):
+            print("WebUI not running.")
+            return
+        print("Stopping webui...")
+        run(["docker", "rm", "-f", "sandbox-webui"], capture_output=True)
+        print("WebUI stopped.")
+        return
+
+    if action == "status":
+        if container_running("sandbox-webui"):
+            print(f"WebUI: running")
+            print(f"  https://{bind}:{port}")
+        elif container_exists("sandbox-webui"):
+            print("WebUI: stopped (container exists)")
+        else:
+            print(f"WebUI: not running  (configured bind {bind}:{port})")
+        return
 
 
 # ─── CLI Parser ───────────────────────────────────────────────────────────────
@@ -1772,6 +1916,20 @@ def build_parser() -> argparse.ArgumentParser:
     ci_watch_sub.add_parser("start", help="Start CI watch")
     ci_watch_sub.add_parser("stop", help="Stop CI watch")
     ci_watch.set_defaults(func=cmd_ci_watch)
+
+    # WebUI subcommands
+    webui = sub.add_parser("webui", help="Manage the optional webui container")
+    webui_sub = webui.add_subparsers(dest="webui_action", required=True)
+    webui_start = webui_sub.add_parser("start", help="Build (if needed) and start the webui")
+    webui_start.add_argument("--bind", metavar="IP",
+                             help="Host IP to bind on (default: 127.0.0.1; persisted to .env as WEBUI_BIND)")
+    webui_sub.add_parser("stop", help="Stop the webui")
+    webui_sub.add_parser("status", help="Show webui status and URL")
+    webui_import = webui_sub.add_parser("import",
+        help="Print webui import string(s); no arg = all projects")
+    webui_import.add_argument("project", nargs="?",
+        help="project name (omit to list every agent container)")
+    webui.set_defaults(func=cmd_webui)
 
     p = sub.add_parser("create", help="Mirror repo and spin up agent container",
                        parents=[container_flags])
