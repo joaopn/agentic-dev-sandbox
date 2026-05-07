@@ -2,15 +2,18 @@
 """fetch-sandbox — Fetch agent branch from sandbox Gitea, run security review and safety checks.
 
 Usage:
-    python fetch-sandbox.py <repo_path> <branch> [--remote <name>] [--base <branch>] [--skip-review]
+    python fetch-sandbox.py <project> [<repo_path>] (--pr <N> | --branch <name> | --commit <sha>) [--skip-review]
     python fetch-sandbox.py setup
 
-    repo_path      Path to your local git repository
-    branch         Branch name to fetch (e.g. agent/feature-branch, main)
-    --remote       Use a pre-configured git remote instead of fetching by URL
-    --base         Override base branch for diff computation (default: auto-detect)
+    project        Sandbox project name (e.g. myrepo)
+    repo_path      Path to your local git repository (default: cwd)
+    --pr           Fetch PR #N from Gitea (head branch)
+    --branch       Fetch a branch by name
+    --commit       Fetch a specific commit SHA (Gitea must allow uploadpack.allowAnySHA1InWant)
     --skip-review  Skip the LLM security review step
     setup          Configure LLM provider for security reviews (interactive)
+
+Diff for review/safety is always HEAD...<ref> — what `git merge --squash` will apply.
 """
 from __future__ import annotations
 
@@ -102,6 +105,24 @@ def load_review_config() -> tuple[str, str, str, str] | None:
     if not model:
         return None
     return provider or "anthropic", api_key, model, endpoint
+
+
+def load_max_diff_size() -> int:
+    """Load REVIEWER_MAX_DIFF_SIZE from .env. 0 = no truncation. Default: 0."""
+    env_file = SCRIPT_DIR / ".env"
+    if not env_file.exists():
+        return 0
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == "REVIEWER_MAX_DIFF_SIZE":
+            try:
+                return max(0, int(value.strip()))
+            except ValueError:
+                return 0
+    return 0
 
 
 def load_yaml_config(path: Path) -> dict:
@@ -250,12 +271,13 @@ def call_llm(diff: str, provider: str, api_key: str, model: str, endpoint: str,
     if not provider_fn:
         return f"*Review skipped: unknown provider '{provider}'.*"
 
-    prompt = prompt_template.format(diff=diff[:max_diff_size])
+    truncated = diff if max_diff_size <= 0 else diff[:max_diff_size]
+    prompt = prompt_template.format(diff=truncated)
     return provider_fn(prompt, api_key, model, endpoint, max_tokens)
 
 
-def review_diff(repo_path: str, ref: str, base_branch: str) -> bool:
-    """Compute git diff, send to LLM, display review. Returns True if safe to proceed."""
+def review_diff(repo_path: str, ref: str) -> bool:
+    """Compute git diff against HEAD, send to LLM, display review. Returns True if safe to proceed."""
     print("\n── Security Review (LLM) ──")
 
     review_cfg = load_review_config()
@@ -272,23 +294,26 @@ def review_diff(repo_path: str, ref: str, base_branch: str) -> bool:
         return True
     endpoint = endpoint.rstrip("/")
 
-    # Load prompt and tunables from review-config.yaml
+    # Load prompt + token limit from yaml; diff-size limit comes from .env (set by `setup`)
     yaml_cfg = load_yaml_config(SCRIPT_DIR / "review-config.yaml")
     prompt_template = yaml_cfg.get("prompt", DEFAULT_PROMPT)
-    max_diff_size = int(yaml_cfg.get("max_diff_size", 100_000))
     max_tokens = int(yaml_cfg.get("max_tokens", 4096))
+    max_diff_size = load_max_diff_size()
 
-    # Compute diff
-    r = git(repo_path, "diff", f"{base_branch}...{ref}", check=False)
+    # Compute diff against current checkout (matches what `merge --squash` will apply)
+    r = git(repo_path, "diff", f"HEAD...{ref}", check=False)
     diff = r.stdout
     if not diff:
-        print("  (No diff to review — branch matches base.)")
+        print("  (No diff to review — branch matches HEAD.)")
         return True
 
     print(f"  Provider: {provider} | Model: {model}")
-    print(f"  Diff size: {len(diff)} chars (limit: {max_diff_size})")
-    if len(diff) > max_diff_size:
-        print(f"  Warning: diff truncated from {len(diff)} to {max_diff_size} chars")
+    if max_diff_size <= 0:
+        print(f"  Diff size: {len(diff)} chars (no truncation)")
+    else:
+        print(f"  Diff size: {len(diff)} chars (limit: {max_diff_size})")
+        if len(diff) > max_diff_size:
+            print(f"  Warning: diff truncated from {len(diff)} to {max_diff_size} chars")
     print("  Sending to LLM...", end=" ", flush=True)
 
     review = call_llm(diff, provider, api_key, model, endpoint,
@@ -308,8 +333,8 @@ def review_diff(repo_path: str, ref: str, base_branch: str) -> bool:
 # ─── Safety checks ────────────────────────────────────────────────────────────
 
 
-def run_safety_checks(repo_path: str, ref: str, base_override: str = "") -> str:
-    """Check for symlinks and auto-execute file modifications. Returns base_branch."""
+def run_safety_checks(repo_path: str, ref: str) -> None:
+    """Check for symlinks and auto-execute file modifications (diff against HEAD)."""
     print("\n── Pre-Merge Safety Checks ──")
 
     # Symlinks
@@ -327,21 +352,11 @@ def run_safety_checks(repo_path: str, ref: str, base_override: str = "") -> str:
     else:
         print("  Symlinks: none")
 
-    # Determine base branch: explicit override > origin/HEAD > "main" fallback
-    if base_override:
-        base_branch = base_override
-    else:
-        r = git(repo_path, "symbolic-ref", "refs/remotes/origin/HEAD", check=False)
-        base_branch = r.stdout.strip().replace("refs/remotes/origin/", "") if r.returncode == 0 else "main"
-    print(f"  Base branch: {base_branch}")
-
-    r = git(repo_path, "diff", "--quiet", f"{base_branch}...{ref}", "--", *AUTO_EXEC_PATHS, check=False)
+    r = git(repo_path, "diff", "--quiet", f"HEAD...{ref}", "--", *AUTO_EXEC_PATHS, check=False)
     if r.returncode != 0:
         print("  \u26a0  Auto-execute files: MODIFIED")
     else:
         print("  Auto-execute files: unchanged")
-
-    return base_branch
 
 
 # ─── Review setup ─────────────────────────────────────────────────────────────
@@ -439,6 +454,18 @@ def cmd_setup() -> None:
     except URLError as e:
         die(f"health check failed — POST {check_url}: {e.reason}")
 
+    # Max diff size (chars sent to the LLM; 0 = no truncation)
+    current_max = load_max_diff_size()
+    print(f"Max diff size in chars (0 = no truncation) [{current_max}]: ", end="", flush=True)
+    choice = input().strip()
+    if not choice:
+        max_diff_size = current_max
+    else:
+        try:
+            max_diff_size = max(0, int(choice))
+        except ValueError:
+            die(f"Max diff size must be a non-negative integer, got {choice!r}")
+
     # Write to .env
     print("Saving configuration...")
     update_env_key("REVIEWER_PROVIDER", provider)
@@ -446,26 +473,28 @@ def cmd_setup() -> None:
     update_env_key("REVIEWER_MODEL", model)
     if endpoint:
         update_env_key("REVIEWER_ENDPOINT", endpoint)
+    update_env_key("REVIEWER_MAX_DIFF_SIZE", str(max_diff_size))
 
+    diff_label = "no truncation" if max_diff_size <= 0 else f"{max_diff_size} chars"
     print(f"""
 === Reviewer Ready ===
 Provider:  {provider}
 Model:     {model}
+Max diff:  {diff_label}
 Reviews will run automatically when you use fetch-sandbox.py.""")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
-def _run_review_and_merge(repo_path: str, ref: str,
-                          base_override: str, skip_review: bool) -> None:
+def _run_review_and_merge(repo_path: str, ref: str, skip_review: bool) -> None:
     """Run safety checks, optional LLM review, and squash-merge."""
     # Safety checks
-    base_branch = run_safety_checks(repo_path, ref, base_override)
+    run_safety_checks(repo_path, ref)
 
     # LLM security review
     if not skip_review:
-        safe = review_diff(repo_path, ref, base_branch)
+        safe = review_diff(repo_path, ref)
         if not safe:
             print("\nMerge cancelled by user after security review.")
             return
@@ -486,49 +515,96 @@ def _run_review_and_merge(repo_path: str, ref: str,
     print(f"\nDone — changes applied as unstaged modifications on {local_branch}.")
 
 
+def _print_usage() -> None:
+    print("Usage: python fetch-sandbox.py <project> [<repo_path>] (--pr <N> | --branch <name> | --commit <sha>) [--skip-review]")
+    print("       python fetch-sandbox.py setup")
+    print()
+    print("  project        Sandbox project name")
+    print("  repo_path      Path to your local git repository (default: cwd)")
+    print("  --pr <N>       Fetch PR #N from Gitea (head branch)")
+    print("  --branch <X>   Fetch branch X")
+    print("  --commit <S>   Fetch commit SHA S directly")
+    print("  --skip-review  Skip the LLM security review step")
+    print("  setup          Configure LLM provider for security reviews")
+
+
+def _resolve_pr(api_base: str, token: str, project: str, pr_id: int) -> tuple[str, str]:
+    """Look up a PR by ID. Returns (head_ref, base_ref)."""
+    gitea_user = f"agent-{project}"
+    try:
+        data = gitea_get(api_base, token, f"/api/v1/repos/{gitea_user}/{project}/pulls/{pr_id}")
+    except HTTPError as e:
+        if e.code == 404:
+            die(f"PR #{pr_id} not found in {gitea_user}/{project}")
+        die(f"Gitea API error fetching PR #{pr_id}: {e}")
+    except URLError as e:
+        die(f"Cannot reach Gitea at {api_base}: {e}")
+    if not isinstance(data, dict):
+        die(f"Unexpected response shape for PR #{pr_id}")
+    head = (data.get("head") or {}).get("ref")
+    base = (data.get("base") or {}).get("ref")
+    if not head or not base:
+        die(f"PR #{pr_id} response missing head/base refs")
+    state = data.get("state", "?")
+    merged = data.get("merged", False)
+    title = data.get("title", "")
+    status = "merged" if merged else state
+    print(f"  PR #{pr_id} [{status}]: {head} → {base}")
+    if title:
+        print(f"  Title: {title}")
+    return head, base
+
+
 def main() -> None:
     # Dispatch subcommand
     if len(sys.argv) >= 2 and sys.argv[1] == "setup":
         cmd_setup()
         return
 
-    skip_review = "--skip-review" in sys.argv
-    base_override = ""
-    remote_name = ""
-    argv = []
+    skip_review = False
+    pr_id: int | None = None
+    branch = ""
+    commit = ""
+    positional: list[str] = []
     i = 1
     while i < len(sys.argv):
-        if sys.argv[i] == "--skip-review":
+        a = sys.argv[i]
+        if a == "--skip-review":
+            skip_review = True
             i += 1
             continue
-        if sys.argv[i] == "--base" and i + 1 < len(sys.argv):
-            base_override = sys.argv[i + 1]
+        if a == "--pr" and i + 1 < len(sys.argv):
+            try:
+                pr_id = int(sys.argv[i + 1])
+            except ValueError:
+                die(f"--pr expects an integer, got {sys.argv[i + 1]!r}")
             i += 2
             continue
-        if sys.argv[i] == "--remote" and i + 1 < len(sys.argv):
-            remote_name = sys.argv[i + 1]
+        if a == "--branch" and i + 1 < len(sys.argv):
+            branch = sys.argv[i + 1]
             i += 2
             continue
-        argv.append(sys.argv[i])
+        if a == "--commit" and i + 1 < len(sys.argv):
+            commit = sys.argv[i + 1].strip()
+            if not all(c in "0123456789abcdefABCDEF" for c in commit) or not (4 <= len(commit) <= 64):
+                die(f"--commit expects a hex SHA (4-64 chars), got {commit!r}")
+            i += 2
+            continue
+        if a in ("-h", "--help"):
+            _print_usage()
+            return
+        positional.append(a)
         i += 1
 
-    if len(argv) < 2:
-        print("Usage: python fetch-sandbox.py <repo_path> <branch> [--remote <name>] [--base <branch>] [--skip-review]")
-        print("       python fetch-sandbox.py setup")
-        print()
-        print("  repo_path      Path to your local git repository")
-        print("  branch         Branch name to fetch (e.g. agent/feature-branch, main)")
-        print("  --remote       Use a pre-configured git remote instead of fetching by URL")
-        print("  --base         Override base branch for diff computation (default: auto-detect)")
-        print("  --skip-review  Skip the LLM security review step")
-        print("  setup          Configure LLM provider for security reviews")
+    if not positional:
+        _print_usage()
         sys.exit(1)
+    selectors = sum(x is not None and x != "" for x in (pr_id, branch, commit))
+    if selectors != 1:
+        die("Specify exactly one of --pr <N>, --branch <name>, or --commit <sha>")
 
-    repo_path = os.path.abspath(argv[0])
-    branch = argv[1]
-
-    project = os.path.basename(repo_path)
-    gitea_user = f"agent-{project}"
+    project = positional[0]
+    repo_path = os.path.abspath(positional[1]) if len(positional) > 1 else os.getcwd()
 
     # Validate git repo
     r = subprocess.run(["git", "-C", repo_path, "rev-parse", "--is-inside-work-tree"],
@@ -537,45 +613,38 @@ def main() -> None:
         die(f"Not a git repository: {repo_path}")
 
     # Load config
-    gitea_port, _ = load_env()
+    gitea_port, gitea_admin_token = load_env()
+    gitea_user = f"agent-{project}"
+    api_base = f"http://localhost:{gitea_port}"
+    sandbox_url = f"{api_base}/{gitea_user}/{project}.git"
 
-    # Compute fetch URL and ref
-    sandbox_url = f"http://localhost:{gitea_port}/{gitea_user}/{project}.git"
-    if remote_name:
-        ref = f"{remote_name}/{branch}"
+    print(f"{'=' * 64}")
+    if pr_id is not None:
+        print(f"  fetch-sandbox: {project} / PR #{pr_id}")
+    elif commit:
+        print(f"  fetch-sandbox: {project} / commit {commit[:12]}")
+    else:
+        print(f"  fetch-sandbox: {project} / {branch}")
+    print(f"{'=' * 64}")
+
+    # Resolve PR id → branch (and display base for context)
+    if pr_id is not None:
+        branch, _base_ref = _resolve_pr(api_base, gitea_admin_token, project, pr_id)
+
+    # Fetch into a temporary ref, clean up afterward
+    if commit:
+        ref = f"refs/sandbox-fetch/commit-{commit[:12]}"
+        print(f"\nFetching commit {commit} from {sandbox_url}...")
+        r = git(repo_path, "fetch", sandbox_url, f"+{commit}:{ref}", check=False)
+        if r.returncode != 0:
+            print(f"Error: cannot fetch commit {commit} from {sandbox_url}", file=sys.stderr)
+            print("\nGitea must have uploadpack.allowAnySHA1InWant=true for arbitrary-SHA fetch.")
+            print(f"git stderr:\n{r.stderr}")
+            sys.exit(1)
     else:
         ref = f"refs/sandbox-fetch/{branch}"
-
-    print(f"{'=' * 64}")
-    print(f"  fetch-sandbox: {project} / {branch}")
-    print(f"{'=' * 64}")
-
-    # ── Fetch and merge ──
-    if remote_name:
-        # --remote mode: use a pre-configured remote
-        print(f"\nFetching from remote '{remote_name}'...")
-        r = git(repo_path, "fetch", remote_name, check=False)
-        if r.returncode != 0:
-            die(f"git fetch {remote_name} failed:\n{r.stderr}")
-
-        r = git(repo_path, "rev-parse", ref, check=False)
-        if r.returncode != 0:
-            print(f"Error: Branch '{branch}' not found on remote '{remote_name}'.", file=sys.stderr)
-            print(f"\nAvailable branches on '{remote_name}':")
-            r = git(repo_path, "branch", "-r", check=False)
-            for line in r.stdout.splitlines():
-                line = line.strip()
-                if line.startswith(f"{remote_name}/"):
-                    print(f"  {line.removeprefix(f'{remote_name}/')}")
-            sys.exit(1)
-
-        _run_review_and_merge(repo_path, ref, base_override, skip_review)
-
-    else:
-        # URL-fetch mode: fetch into a temporary ref, clean up afterward
         print(f"\nFetching '{branch}' from {sandbox_url}...")
-        r = git(repo_path, "fetch", sandbox_url,
-                f"{branch}:{ref}", check=False)
+        r = git(repo_path, "fetch", sandbox_url, f"{branch}:{ref}", check=False)
         if r.returncode != 0:
             print(f"Error: Branch '{branch}' not found at {sandbox_url}", file=sys.stderr)
             print("\nAvailable branches:")
@@ -587,10 +656,10 @@ def main() -> None:
                         print(f"  {parts[1].removeprefix('refs/heads/')}")
             sys.exit(1)
 
-        try:
-            _run_review_and_merge(repo_path, ref, base_override, skip_review)
-        finally:
-            git(repo_path, "update-ref", "-d", ref, check=False)
+    try:
+        _run_review_and_merge(repo_path, ref, skip_review)
+    finally:
+        git(repo_path, "update-ref", "-d", ref, check=False)
 
 
 if __name__ == "__main__":

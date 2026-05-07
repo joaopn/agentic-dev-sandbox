@@ -162,27 +162,36 @@ Displaying the password is not a security issue, as anyone with docker permissio
 
 ## ◾ Fetch Sandbox
 
-`fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It fetches the requested branch directly by URL from the local Gitea instance, runs safety checks and an optional LLM security review, then merges. No git remote is added to your repo.
+`fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It fetches the requested branch (or PR) directly by URL from the local Gitea instance, runs safety checks and an optional LLM security review, then merges. No git remote is added to your repo.
 
 ```bash
-python fetch-sandbox.py /path/to/your/repo agent/feature-branch
-python fetch-sandbox.py /path/to/your/repo agent/feature-branch --base dev
-python fetch-sandbox.py /path/to/your/repo agent/feature-branch --skip-review
-python fetch-sandbox.py /path/to/your/repo agent/feature-branch --remote staging
+# Fetch a branch by name
+python fetch-sandbox.py myproject /path/to/your/repo --branch agent/feature-branch
+# Fetch a Gitea PR by number
+python fetch-sandbox.py myproject /path/to/your/repo --pr 5
+# Fetch a specific commit by SHA (Gitea is configured to allow this)
+python fetch-sandbox.py myproject /path/to/your/repo --commit abc1234567890
+# repo_path is optional; defaults to the current directory
+python fetch-sandbox.py myproject --pr 5
+# Skip the LLM review for this fetch
+python fetch-sandbox.py myproject --branch agent/feature-branch --skip-review
 ```
 
-Use `--base <branch>` to specify which branch the diff is computed against (for safety checks and security review). By default, the script auto-detects the base from `refs/remotes/origin/HEAD`, falling back to `main`.
+Diff for review and safety checks is always computed against your current `HEAD` — i.e. the changes that `git merge --squash` would actually apply to your checkout. To review a fetch as if it were landing on a different branch, `git checkout <that-branch>` first; your checkout state is the review context.
 
-Use `--remote <name>` to fetch from a pre-configured git remote instead of by URL. This is optional — by default the script fetches directly and leaves no trace in your git config.
+`--pr <N>` looks up PR #N in Gitea, prints its head/base/state for context, and fetches the head branch. The PR's base is informational only — it's not used for the safety diff.
+
+`--commit <sha>` fetches an arbitrary commit by SHA, including dangling commits not reachable from any branch. This requires Gitea to have `uploadpack.allowAnySHA1InWant=true` (set in `docker-compose.yml`). The same review/safety pipeline runs against `HEAD...<commit>`.
 
 The script performs these steps in order:
 
-1. **Fetch** — Fetches the requested branch by URL into a temporary ref (`refs/sandbox-fetch/<branch>`). The ref is cleaned up automatically after the operation.
-2. **Safety checks** — Scans the fetched ref for:
+1. **Resolve** — If `--pr` was passed, queries the Gitea pulls API to find the head branch.
+2. **Fetch** — Fetches the requested branch by URL into a temporary ref (`refs/sandbox-fetch/<branch>`). The ref is cleaned up automatically after the operation.
+3. **Safety checks** — Scans the fetched ref for:
    - **Symlinks** — lists any symlinks and their targets.
    - **Auto-execute file modifications** — flags changes to files that run automatically (`.envrc`, `Makefile`, `package.json`, pre-commit hooks, `.gitmodules`, etc.).
-3. **LLM security review** — If configured (via `fetch-sandbox.py setup`), computes the git diff and sends it to the configured LLM provider for security analysis. Results are displayed inline. If security issues are found, you're prompted before proceeding.
-4. **Merge** — Applies the changes as unstaged modifications via `git merge --squash` + `git reset HEAD`.
+4. **LLM security review** — If configured (via `fetch-sandbox.py setup`), computes the git diff (`HEAD...<ref>`) and sends it to the configured LLM provider for security analysis. Results are displayed inline. If security issues are found, you're prompted before proceeding.
+5. **Merge** — Applies the changes as unstaged modifications via `git merge --squash` + `git reset HEAD`.
 
 Requires `GITEA_ADMIN_TOKEN` in `.env` (set by `sandbox setup`).
 
@@ -202,7 +211,7 @@ python fetch-sandbox.py setup   # Interactive: configure provider, key, model
 
 To skip the review for a specific fetch:
 ```bash
-python fetch-sandbox.py /path/to/repo branch --skip-review
+python fetch-sandbox.py myproject /path/to/repo --branch <name> --skip-review
 ```
 
 ### Supported providers
@@ -217,6 +226,8 @@ python fetch-sandbox.py /path/to/repo branch --skip-review
 Default endpoints are built into `fetch-sandbox.py`. Override with `REVIEWER_ENDPOINT` in `.env`.
 
 **Customizing the review prompt:** Edit `review-config.yaml` in the project root. The prompt must contain a `{diff}` placeholder. Changes take effect on the next `fetch-sandbox.py` run — no rebuild needed.
+
+**Diff truncation:** `fetch-sandbox.py setup` asks for `REVIEWER_MAX_DIFF_SIZE` (chars sent to the LLM). Default `0` means no truncation — the full diff is sent regardless of size. Set a positive value if your provider has tight context limits.
 
 ## ◾ Repo Watch
 

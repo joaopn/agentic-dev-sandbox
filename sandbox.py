@@ -1039,7 +1039,9 @@ WebUI import string (paste into the webui's Add project dialog):
   {webui_import}
 
 To review agent work from your real repo:
-  python fetch-sandbox.py <repo-path> <branch-name>""")
+  python fetch-sandbox.py {project} [<repo-path>] --branch <branch-name>
+  python fetch-sandbox.py {project} [<repo-path>] --pr <pr-number>
+  python fetch-sandbox.py {project} [<repo-path>] --commit <sha>""")
 
 
 def cmd_attach(args: argparse.Namespace) -> None:

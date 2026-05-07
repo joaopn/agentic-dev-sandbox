@@ -17,6 +17,8 @@ services:
       - GITEA__mirror__DEFAULT_INTERVAL=${MIRROR_INTERVAL:-1m}
       - GITEA__cron__update_mirrors__SCHEDULE=@every ${MIRROR_INTERVAL:-1m}
       - GITEA__repository__DEFAULT_BRANCH=main
+      # Allow `git fetch <url> <sha>` for SHAs not reachable from any ref (used by fetch-sandbox.py --commit)
+      - GITEA__git__config__uploadpack.allowAnySHA1InWant=true
       # Disable features we don't need
       - GITEA__openid__ENABLE_OPENID_SIGNIN=false
       - GITEA__openid__ENABLE_OPENID_SIGNUP=false

@@ -30,7 +30,9 @@ python sandbox.py create https://github.com/you/myproject --profile python --age
 python sandbox.py attach myproject
 
 # 4. Fetch agent committed code (with optional security review)
-python fetch-sandbox.py <myproject local repo> <agent branch name>
+python fetch-sandbox.py <project> [<local repo path>] --branch <agent branch name>
+# or, to fetch a Gitea PR by number:
+python fetch-sandbox.py <project> [<local repo path>] --pr <N>
 ```
 
 ---
@@ -130,7 +132,11 @@ python sandbox.py attach myproject
 ## From the Gitea GUI: http://localhost:3000 (default port)
 
 ## From the CLI:
-python fetch-sandbox.py <repo path> <branch to fetch>
+python fetch-sandbox.py <project> [<repo path>] --branch <branch to fetch>
+## or by PR number:
+python fetch-sandbox.py <project> [<repo path>] --pr <N>
+## or by commit SHA:
+python fetch-sandbox.py <project> [<repo path>] --commit <sha>
 ## LLM security review, symlink check, auto-execute file check
 ## Adds the changes as unstaged changes to the current branch
 ```
@@ -162,7 +168,7 @@ Commands:
 
 Standalone script (run from your real repo):
   python fetch-sandbox.py setup                                              Configure LLM provider for security reviews
-  python fetch-sandbox.py <repo_path> <branch> [--remote <name>] [--base <b>] [--skip-review]  Fetch, review, and merge agent work
+  python fetch-sandbox.py <project> [<repo_path>] (--pr <N> | --branch <X> | --commit <S>) [--skip-review]  Fetch, review, and merge agent work
 
 Create/recreate options:
   --profile <name>               Agent image profile (required)
