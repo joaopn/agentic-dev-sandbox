@@ -161,6 +161,22 @@ body {
 }
 .tab.add:hover { background: var(--border); }
 
+.tab.gitea {
+    color: var(--fg-muted);
+    font-weight: 500;
+    border-right: 1px solid var(--border-strong);
+}
+.tab.gitea::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--fg-accent);
+    margin-right: 2px;
+    flex-shrink: 0;
+}
+.tab.gitea:hover { background: var(--border); color: var(--fg-base); }
+
 .tabbar .spacer { flex: 1; border-right: 1px solid var(--border); }
 
 .tabbar .theme-select {

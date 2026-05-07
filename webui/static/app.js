@@ -179,6 +179,7 @@ const state = {
     terminals: {},      // name -> { term, fitAddon, ws, container, project }
     probeTimer: null,
     theme: null,        // theme id; set by applyTheme on boot
+    giteaUrl: null,     // string | null — populated from /config on dashboard render
 };
 
 // ---- utilities -------------------------------------------------------------
@@ -339,6 +340,8 @@ function renderUnlock() {
 function renderDashboard() {
     clearBody();
     const tabbar = el("div", { class: "tabbar" });
+    const giteaTab = makeGiteaTabEl();
+    if (giteaTab) tabbar.appendChild(giteaTab);
     for (const p of state.vault.projects) {
         tabbar.appendChild(makeTabEl(p));
     }
@@ -357,6 +360,26 @@ function renderDashboard() {
     document.body.appendChild(el("div", { id: "app" }, [dashboard]));
 
     schedulePolling();
+    refreshGiteaTab();
+}
+
+async function refreshGiteaTab() {
+    try {
+        const res = await fetch("/config");
+        const data = await res.json();
+        state.giteaUrl = data.gitea_url || null;
+    } catch (_) {
+        state.giteaUrl = null;
+    }
+    const existing = document.querySelector(".tab.gitea");
+    if (state.giteaUrl) {
+        if (!existing) {
+            const tabbar = document.querySelector(".tabbar");
+            if (tabbar) tabbar.insertBefore(makeGiteaTabEl(), tabbar.firstChild);
+        }
+    } else if (existing) {
+        existing.remove();
+    }
 }
 
 // ---- search bar ------------------------------------------------------------
@@ -424,6 +447,20 @@ function makeThemeSelector() {
     return sel;
 }
 
+function makeGiteaTabEl() {
+    if (!state.giteaUrl) return null;
+    return el("div", {
+        class: "tab gitea",
+        title: `Open Gitea (${state.giteaUrl}) in a new tab`,
+        onclick: openGitea,
+    }, ["Gitea ↗"]);
+}
+
+function openGitea() {
+    if (!state.giteaUrl) return;
+    window.open(state.giteaUrl, "_blank", "noopener,noreferrer");
+}
+
 function makeTabEl(project) {
     const dot = el("span", { class: "status-dot" });
     const closeX = el("span", { class: "close-x", title: "Remove project" }, ["×"]);
@@ -475,6 +512,7 @@ function lockVault() {
     state.salt = null;
     state.terminals = {};
     state.activeTab = null;
+    state.giteaUrl = null;
     renderUnlock();
 }
 

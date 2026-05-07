@@ -32,6 +32,11 @@ LISTEN_HOST = os.environ.get("WEBUI_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("WEBUI_PORT", "7777"))
 HOST_BIND = os.environ.get("WEBUI_BIND", "127.0.0.1")
 
+# Gitea launcher URL. The webui exposes this via /config; the browser opens
+# it in a new tab when the user clicks the leftmost "Gitea" tab. Empty means
+# "no Gitea tab" — the launcher tab simply isn't rendered.
+GITEA_URL = (os.environ.get("WEBUI_GITEA_URL", "") or "").strip().rstrip("/")
+
 
 class HostKeyValidator(asyncssh.SSHClient):
     """Capture host key during handshake; reject if it doesn't match expected."""
@@ -206,6 +211,11 @@ async def index_handler(request: web.Request) -> web.Response:
     return web.FileResponse(STATIC_DIR / "index.html")
 
 
+async def config_handler(request: web.Request) -> web.Response:
+    """Browser-side runtime config — currently just the Gitea launcher URL."""
+    return web.json_response({"gitea_url": GITEA_URL})
+
+
 def cert_covers_bind(cert_path: Path, bind: str) -> bool:
     """Check whether the existing cert's SAN already includes `bind`."""
     if not cert_path.exists():
@@ -284,6 +294,7 @@ def main() -> None:
 
     app = web.Application()
     app.router.add_get("/", index_handler)
+    app.router.add_get("/config", config_handler)
     app.router.add_get("/probe", probe_handler)
     app.router.add_get("/tab", ws_handler)
     app.router.add_static("/static", STATIC_DIR)

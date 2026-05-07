@@ -61,6 +61,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - WEBUI_BIND=${WEBUI_BIND:-127.0.0.1}
+      - WEBUI_GITEA_URL=${WEBUI_GITEA_URL:-http://${WEBUI_BIND:-127.0.0.1}:${GITEA_PORT:-3000}}
     ports:
       - "${WEBUI_BIND:-127.0.0.1}:${WEBUI_PORT:-7777}:7777"
     volumes:
