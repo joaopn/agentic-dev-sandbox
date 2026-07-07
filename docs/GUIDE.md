@@ -249,6 +249,44 @@ imports and keeps serving the old code silently:
 python sandbox.py broker stop && python sandbox.py broker start
 ```
 
+### Management from the browser
+
+With the broker running, the webui's sidebar is management-aware:
+
+- **Unlock = login.** Unlocking the vault derives a login proof from your
+  master password and auto-logs into the broker (one attempt — never looped).
+  If the proof doesn't match the broker's operator password, a
+  "Management locked — Connect" row appears in the sidebar; clicking it shows
+  the mismatch card (fix host-side with `python sandbox.py broker passwd`).
+  Locking the vault logs you out (revokes the broker session).
+- **Broker-derived sidebar.** One row per project — running projects get
+  their SSH credentials fetched just-in-time (held in memory, never written
+  to localStorage); stopped projects are listed so you can start them. The
+  Gitea launcher is pinned on top. Manually imported bookmarks (the
+  "Import existing" mode in + New project) keep working with the broker
+  stopped.
+- **Lifecycle from the gear menu.** Start/Stop/Sync fire immediately and open
+  a live milestone checklist tailing the op's progress log. Destroy asks you
+  to retype the project name AND your master password (step-up re-auth — the
+  proof is derived in the browser; the raw password never transits).
+- **+ New project.** "Create from GitHub" posts the same fields the CLI
+  accepts for browser-safe creation (URL, branch, egress, memory/cpus,
+  image profile, agent, DinD) — profiles and agents come as clickable cards
+  from the broker's catalog. Host-shaped fields (`--ssh-port`, `--gpus`,
+  socat `port`) stay CLI-only.
+- **Port tabs.** Each project's gear menu manages a broker-owned port-tab
+  registry (`.broker/run/registry/webports.json`). Registered ports become
+  embedded tabs once the HTTP-tab proxy ships; agents can never add or
+  retarget a tab.
+
+**After editing any `webui/*` file, rebuild + restart the webui** — the image
+carries a copy of the code and keeps serving stale bytes otherwise:
+
+```bash
+python sandbox.py webui stop
+python sandbox.py webui start --bind 100.72.206.77
+```
+
 ## ◾ Fetch Sandbox
 
 `fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It fetches the requested branch (or PR) directly by URL from the local Gitea instance, runs safety checks and an optional LLM security review, then merges. No git remote is added to your repo.

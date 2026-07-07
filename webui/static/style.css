@@ -22,6 +22,7 @@
     --status-error: #e66;
     --terminal-bg: #000;
     --terminal-fg: #e0e0e0;
+    --rail-width: 200px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -48,6 +49,21 @@ body {
 }
 .card h2 { margin-bottom: 16px; font-weight: 500; }
 .card p { margin-bottom: 16px; color: var(--fg-muted); font-size: 14px; }
+.card pre {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    overflow-x: auto;
+}
+.card code {
+    background: var(--bg-input);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 12px;
+}
 
 .field { margin-bottom: 12px; }
 .field label {
@@ -76,6 +92,9 @@ body {
     outline: none;
     border-color: var(--bg-input-focus-border);
 }
+/* Two fields side by side (create dialog memory/cpus, webport add row). */
+.field-row { display: flex; gap: 12px; align-items: flex-end; }
+.field-row .field { flex: 1; }
 
 .btn {
     padding: 8px 18px;
@@ -88,10 +107,12 @@ body {
     font-weight: 500;
 }
 .btn:hover { background: var(--btn-bg-hover); }
+.btn:disabled { opacity: 0.6; cursor: default; }
 .btn-secondary { background: var(--btn-secondary-bg); }
 .btn-secondary:hover { background: var(--btn-secondary-bg-hover); }
 .btn-danger { background: var(--btn-danger-bg); }
 .btn-danger:hover { background: var(--btn-danger-bg-hover); }
+.btn-small { padding: 4px 10px; font-size: 12px; }
 .btn-row {
     display: flex;
     gap: 8px;
@@ -103,10 +124,267 @@ body {
 .error { color: var(--error-fg); font-size: 13px; margin-top: 8px; min-height: 18px; }
 .hint { color: var(--fg-faint); font-size: 12px; margin-top: 4px; }
 
-/* Dashboard */
-.dashboard { display: flex; flex-direction: column; height: 100%; }
+/* Inline checkbox + label (create dialog DinD toggle). Kept OUT of .field —
+   its input{width:100%} / uppercase-label rules assume block text inputs and
+   bleed onto checkboxes. */
+.mgmt-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--fg-base);
+    cursor: pointer;
+    margin: 4px 0 8px;
+}
+.mgmt-check input { cursor: pointer; }
 
-.tabbar {
+.mgmt-loading { color: var(--fg-muted); font-size: 13px; padding: 8px 0; }
+
+/* Dashboard — 2D layout: vertical project rail x horizontal service tabs.
+   Outer dashboard is a row (rail | main); main is a column (tabstrip /
+   content). The rail can be pinned (in flex flow, push layout) or unpinned
+   (absolute, overlay on top of main when expanded; hidden when collapsed).
+   The Projects tab handle is always visible in the strip. */
+.dashboard { display: flex; flex-direction: row; height: 100%; position: relative; }
+
+.project-rail {
+    width: var(--rail-width, 200px);
+    flex-shrink: 0;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    position: relative;  /* anchor for .rail-splitter */
+}
+
+/* Drag handle on the rail's right edge. Transparent by default (so it
+   doesn't crowd the rail visually) but a 6px-wide hit area; the cursor
+   changes to col-resize when hovering and the bar tints to the theme
+   accent during hover/drag. */
+.project-rail .rail-splitter {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
+    background: transparent;
+}
+.project-rail .rail-splitter:hover,
+.project-rail .rail-splitter.dragging {
+    background: var(--fg-accent);
+}
+
+/* Collapsed: rail is hidden entirely. */
+.dashboard:not(.expanded) .project-rail { display: none; }
+
+/* Unpinned + expanded: rail floats below the service-tabs strip (36px tall)
+   so the Projects tab triggering it stays visible. */
+.dashboard.expanded:not(.pinned) .project-rail {
+    position: absolute;
+    top: 36px;
+    bottom: 0;
+    left: 0;
+    z-index: 3;
+    box-shadow: 4px 0 12px rgba(0, 0, 0, 0.4);
+}
+
+/* The Projects tab lives in the service-tabs strip alongside service tabs.
+   It's a control, not a service — toggles rail visibility, never gets the
+   .active service-underline. */
+.service-tabs .projects-tab {
+    color: var(--fg-muted);
+    border-right: 1px solid var(--border-strong);
+}
+.service-tabs .projects-tab:hover { background: var(--border); color: var(--fg-base); }
+.service-tabs .projects-tab .projects-chevron {
+    font-size: 11px;
+    color: var(--fg-faint);
+}
+
+.project-rail .rail-header {
+    padding: 10px 14px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--fg-muted);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.project-rail .rail-header .pin-btn {
+    background: transparent;
+    border: none;
+    color: var(--fg-faint);
+    cursor: pointer;
+    padding: 2px 4px;
+    display: flex;
+    align-items: center;
+    line-height: 1;
+}
+.project-rail .rail-header .pin-btn:hover { color: var(--fg-base); }
+.project-rail .rail-header .pin-btn.pinned { color: var(--fg-accent); }
+.project-rail .rail-header .pin-btn svg {
+    width: 14px;
+    height: 14px;
+    transition: transform 120ms ease;
+    transform: rotate(45deg);
+}
+.project-rail .rail-header .pin-btn.pinned svg { transform: rotate(0deg); }
+
+/* Fixed Gitea launcher row, pinned above the project rows. */
+.project-rail .gitea-row {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border-strong);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.project-rail .gitea-row::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--fg-accent);
+    flex-shrink: 0;
+}
+.project-rail .gitea-row:hover { background: var(--border); color: var(--fg-base); }
+
+/* Management-locked Connect row: auto-login failed or the session expired. */
+.project-rail .mgmt-connect-row {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fg-accent);
+}
+.project-rail .mgmt-connect-row:hover { background: var(--border); color: var(--fg-base); }
+
+.project-rail .project {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--fg-base);
+}
+.project-rail .project:hover:not(.active) { background: var(--border); }
+.project-rail .project.active {
+    background: var(--bg-active);
+    box-shadow: -3px 0 0 var(--fg-accent) inset;
+}
+.project-rail .project .project-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.project-rail .project .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.project-rail .project .project-config-btn {
+    flex-shrink: 0;
+    color: var(--fg-faint);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 2px;
+}
+.project-rail .project .project-config-btn:hover { color: var(--fg-accent); }
+
+.project-rail .project.up .status-dot { background: var(--status-up); }
+.project-rail .project.down .status-dot { background: var(--status-down); }
+.project-rail .project.error .status-dot { background: var(--status-error); }
+
+.project-rail .add-project {
+    padding: 10px 14px;
+    background: transparent;
+    color: var(--fg-accent);
+    border: none;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+}
+.project-rail .add-project:hover { background: var(--border); color: var(--fg-base); }
+
+.project-rail .rail-spacer { flex: 1; }
+.project-rail .rail-footer {
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+}
+.project-rail .rail-footer .theme-select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 8px 12px;
+    background: transparent;
+    color: var(--fg-muted);
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    text-align: left;
+}
+.project-rail .rail-footer .theme-select:hover { color: var(--fg-base); background: var(--border); }
+.project-rail .rail-footer .theme-select:focus { outline: none; }
+.project-rail .rail-footer .lock-btn {
+    padding: 8px 12px;
+    background: transparent;
+    color: var(--fg-muted);
+    border: none;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 12px;
+    text-align: left;
+}
+.project-rail .rail-footer .lock-btn:hover { color: var(--fg-base); background: var(--border); }
+
+/* Per-project gear menu — position: fixed in JS so it overlays outside the
+   (possibly narrow) rail rather than being clipped by it. */
+.project-gear-menu {
+    position: fixed;
+    z-index: 200;
+    min-width: 160px;
+    max-width: 260px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    padding: 4px 0;
+    font-size: 13px;
+    color: var(--fg-base);
+}
+.project-gear-menu .gear-item {
+    padding: 6px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.project-gear-menu .gear-item:hover { background: var(--border); }
+.project-gear-menu .gear-item.danger { color: var(--error-fg); }
+
+.main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;  /* allow flex children to shrink */
+}
+
+.service-tabs {
     display: flex;
     align-items: stretch;
     background: var(--bg-card);
@@ -115,8 +393,7 @@ body {
     flex-shrink: 0;
     overflow-x: auto;
 }
-
-.tab {
+.service-tabs .tab {
     display: flex;
     align-items: center;
     padding: 0 14px;
@@ -128,12 +405,61 @@ body {
     gap: 8px;
     white-space: nowrap;
 }
-.tab.active {
+.service-tabs .tab.active {
     background: var(--bg-active);
     color: var(--fg-base);
     box-shadow: 0 -2px 0 var(--fg-accent) inset;
 }
-.tab:hover:not(.active) { background: var(--border); }
+.service-tabs .tab:hover:not(.active) { background: var(--border); }
+.service-tabs .empty {
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    color: var(--fg-faint);
+    font-size: 12px;
+}
+/* Active-project label sits between the Projects toggle and the service tabs.
+   Static text — not clickable, no hover. A bordered chip (full border +
+   rounded) so it reads as the strip's anchor, visually distinct from the
+   tabs; a tab-group-divider follows it (rendered by renderServiceTabs). */
+.service-tabs .active-project {
+    align-self: center;
+    height: 22px;
+    padding: 0 12px;
+    margin-left: 8px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--fg-base);
+    white-space: nowrap;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-active);
+}
+/* Thin vertical rule between the Visual (iframe surfaces) and CLI (terminal)
+   tab groups. Rendered by renderServiceTabs only when both groups are
+   non-empty, so it never orphans. */
+.service-tabs .tab-group-divider {
+    align-self: center;
+    width: 1px;
+    height: 18px;
+    margin: 0 6px;
+    background: var(--border);
+    flex-shrink: 0;
+}
+/* Inline-SVG tab icon. Inherits the tab's `color`, so the active/hover
+   states recolor it for free via currentColor. */
+.service-tabs .tab .tab-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+.service-tabs .tab .tab-icon svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+}
 
 .status-dot {
     width: 8px;
@@ -142,73 +468,6 @@ body {
     background: var(--status-down);
     flex-shrink: 0;
 }
-.tab.up .status-dot { background: var(--status-up); }
-.tab.down .status-dot { background: var(--status-down); }
-.tab.error .status-dot { background: var(--status-error); }
-
-.tab .close-x {
-    color: var(--fg-faint);
-    padding: 0 2px;
-    font-size: 16px;
-    line-height: 1;
-}
-.tab .close-x:hover { color: var(--fg-base); }
-
-.tab.add {
-    background: transparent;
-    color: var(--fg-accent);
-    border-right: 1px solid var(--border);
-}
-.tab.add:hover { background: var(--border); }
-
-.tab.gitea {
-    color: var(--fg-muted);
-    font-weight: 500;
-    border-right: 1px solid var(--border-strong);
-}
-.tab.gitea::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--fg-accent);
-    margin-right: 2px;
-    flex-shrink: 0;
-}
-.tab.gitea:hover { background: var(--border); color: var(--fg-base); }
-
-.tabbar .spacer { flex: 1; border-right: 1px solid var(--border); }
-
-.tabbar .theme-select {
-    appearance: none;
-    -webkit-appearance: none;
-    padding: 0 24px 0 12px;
-    background: transparent;
-    color: var(--fg-muted);
-    border: none;
-    border-left: 1px solid var(--border);
-    cursor: pointer;
-    font-size: 13px;
-    font-family: inherit;
-    background-image: linear-gradient(45deg, transparent 50%, var(--fg-muted) 50%),
-                      linear-gradient(135deg, var(--fg-muted) 50%, transparent 50%);
-    background-position: calc(100% - 12px) center, calc(100% - 8px) center;
-    background-size: 4px 4px, 4px 4px;
-    background-repeat: no-repeat;
-}
-.tabbar .theme-select:hover { color: var(--fg-base); background-color: var(--border); }
-.tabbar .theme-select:focus { outline: none; }
-
-.tabbar .lock-btn {
-    padding: 6px 14px;
-    background: transparent;
-    color: var(--fg-muted);
-    border: none;
-    cursor: pointer;
-    font-size: 13px;
-    border-left: 1px solid var(--border);
-}
-.tabbar .lock-btn:hover { color: var(--fg-base); background: var(--border); }
 
 .terminal-area {
     flex: 1;
@@ -219,9 +478,42 @@ body {
 .terminal-instance {
     position: absolute;
     inset: 0;
-    padding: 4px;
 }
 .terminal-instance.hidden { display: none; }
+/* Visual padding around xterm. Two interlocking concerns:
+   1. Padding on .terminal-instance breaks xterm-addon-fit, which measures
+      `parentElement.height` (border-box, includes padding) but subtracts
+      only the xterm element's own padding — so xterm over-estimates rows
+      and draws its last row outside the visible area, eating byobu.
+   2. xterm sizes its element to exactly rows x cellHeight, always <=
+      available height; the row-rounding remainder would otherwise leave
+      empty terminal-bg below byobu.
+   Solution: this inset wrapper has no padding (xterm-fit sees a clean
+   rectangle), uses flex column with justify-content: flex-end so the
+   row-rounding remainder is absorbed at the top, and uses a small bottom
+   inset so byobu sits a few px above the container's bottom edge. */
+.terminal-pad {
+    position: absolute;
+    inset: 2px 2px 4px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    /* xterm.element has an explicit pixel width = cols x cellWidth (always
+       <= pad width). The flex default `align-items: stretch` doesn't stretch
+       an item with a definite cross-size, so the item would otherwise pin to
+       cross-start (left) and dump the entire remainder on the right.
+       Centering splits it evenly. */
+    align-items: center;
+}
+/* xterm's viewport ships with `overflow-y: scroll` (always-visible track),
+   not `auto`. Hide it — mouse wheel + byobu's own scrollback keys still
+   work without a visible track. */
+.terminal-pad .xterm-viewport {
+    scrollbar-width: none;        /* Firefox */
+}
+.terminal-pad .xterm-viewport::-webkit-scrollbar {
+    display: none;                /* Chromium, Safari */
+}
 
 .welcome {
     padding: 32px;
@@ -289,3 +581,77 @@ body {
     max-height: 90vh;
     overflow-y: auto;
 }
+.modal-backdrop .card.create-card { max-width: min(640px, 94vw); }
+.mgmt-modal-view { display: contents; }
+
+/* Two-phase op box — phase-2 expected-stage checklist. */
+.op-checklist {
+    margin: 0 0 4px;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+.op-fail { color: var(--error-fg); font-size: 13px; margin: 8px 0 0; min-height: 0; }
+.op-check {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 13px;
+}
+.op-check-icon {
+    flex: 0 0 1.1em;
+    text-align: center;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.op-check.pending { color: var(--fg-faint); }
+.op-check.pending .op-check-icon { color: var(--fg-faint); }
+.op-check.ok { color: var(--fg-base); }
+.op-check.ok .op-check-icon { color: var(--status-up); }
+.op-check.failed { color: var(--error-fg); }
+.op-check.failed .op-check-icon { color: var(--status-error); }
+
+/* Selectable option cards (create dialog: mode / egress / profile / agent).
+   Selection is shown by an accent border ring, not a visible control. */
+.box-opt-group { margin: 8px 0 12px; }
+.box-opt-caption {
+    font-size: 12px;
+    color: var(--fg-muted);
+    margin-bottom: 4px;
+}
+.box-opt-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+.box-opt-card {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--fg-base);
+    user-select: none;
+}
+.box-opt-card:hover { border-color: var(--fg-accent); }
+.box-opt-card.selected {
+    border-color: var(--fg-accent);
+    box-shadow: inset 0 0 0 1px var(--fg-accent);
+}
+.box-opt-name { white-space: nowrap; }
+
+/* Webport dialog rows */
+.webport-list { margin: 8px 0; }
+.webport-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+    font-size: 13px;
+}
+.webport-row .webport-port {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    min-width: 52px;
+}
+.webport-row .webport-label {
+    flex: 1;
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.webport-add .btn { margin-bottom: 12px; }
