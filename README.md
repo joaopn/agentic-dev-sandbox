@@ -160,6 +160,8 @@ Commands:
   pause <project|--all>          Freeze container(s) in place (cgroup)
   unpause <project|--all>        Resume frozen container(s)
   sync <project>                 Trigger Gitea mirror sync from GitHub
+  push-context <project>         Copy memory/plan/agent-config files from host repo to agent workspace
+  pull-context <project>         Copy memory/plan/agent-config files from agent workspace to host repo
   set-branch <project> <branch>  Switch agent's base branch without recreating
   recreate <project> [opts]      New container + fresh volume + fresh token
   status                         List all projects, containers, ports
@@ -191,6 +193,7 @@ Create/recreate options:
 agentic-dev-sandbox/
 ├── sandbox.py                    Main CLI (Python 3, stdlib only)
 ├── ci-config.yaml                CI watch resource limits and rate limiting
+├── context-config.yaml.example   push-context/pull-context defaults (live copy gitignored)
 ├── docker-compose.yml            Gitea + router infrastructure
 ├── review-config.yaml            Security review prompt and tunables
 ├── .env                          Config + secrets (gitignored)

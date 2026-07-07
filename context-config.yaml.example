@@ -1,0 +1,42 @@
+# context-config.yaml — paths copied by `sandbox.py push-context` / `pull-context`
+#
+# push:    host repo → agent workspace (always overwrites the workspace)
+# pull:    agent workspace → host repo (refuses to overwrite host files; pass --overwrite to force)
+# exclude: filters applied to both directions for files swept in by a parent dir
+#
+# Behaviour:
+#   - Symlinks are skipped unconditionally in both directions.
+#   - Directory entries end with "/"; they recurse into the named dir.
+#   - Exclude entries are fnmatch globs; an entry ending in "/" matches that
+#     directory name at any depth (e.g. ".git/" excludes every .git/ tree).
+#   - --include on the CLI adds extra paths AND overrides matching config
+#     excludes (user owns explicit choices).
+#   - --exclude on the CLI adds to the effective exclude list.
+#   - Deletions are NOT propagated — both commands are additive.
+#
+# Copy this file to context-config.yaml and edit the lists below to taste.
+
+push:
+  - .claude/
+  - CLAUDE.md
+  - AGENTS.md
+  - .cursor/rules/
+  - .cursorrules
+  - .clinerules/
+  - .continue/
+  - .aider.conf.yml
+  - plans/
+
+pull:
+  - plans/
+
+exclude:
+  - .env
+  - .env.*
+  - "*.pem"
+  - "*.key"
+  - id_rsa*
+  - id_ed25519*
+  - .ssh/
+  - .git/
+  - .gitea-token

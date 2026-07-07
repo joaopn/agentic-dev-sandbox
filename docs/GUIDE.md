@@ -160,6 +160,58 @@ Displaying the password is not a security issue, as anyone with docker permissio
 - `remote.SSH.enableAgentForwarding` — must be off (forwards host SSH keys)
 - Git credential forwarding — must not be configured
 
+## ◾ Context Sync
+
+`sandbox.py push-context` and `pull-context` move untracked memory/plan/agent-config files (e.g. `.claude/`, `CLAUDE.md`, `AGENTS.md`, `plans/`) between your host repo (the current directory) and the agent's bind-mounted workspace at `container_volumes/<project>/<project>/`. The agent need not be running — these are plain host file copies.
+
+```bash
+# Push host context into the agent's workspace
+python sandbox.py push-context myproject
+
+# Pull whatever the agent wrote back into your host repo
+python sandbox.py pull-context myproject
+
+# Preview without writing
+python sandbox.py push-context myproject --dry-run
+
+# Add an extra path on top of the config, or block one
+python sandbox.py push-context myproject --include notes.md --exclude "drafts/*"
+```
+
+### Configuration
+
+Tracking follows the `.env` / `.env.example` pattern. `context-config.yaml.example` ships in the repo with sensible defaults; copy it to `context-config.yaml` to customise:
+
+```bash
+cp context-config.yaml.example context-config.yaml
+```
+
+`sandbox.py` reads the live file if present, otherwise falls back to `.example`. If neither exists, it dies. The file has three keys, each a list of paths/globs: `push:` (host → workspace), `pull:` (workspace → host), and `exclude:` (filter applied to both).
+
+### Behaviour
+
+- **Symlinks are skipped unconditionally** in both directions — no follow, no copy.
+- **Push always overwrites** the workspace. It's the agent's scratch space.
+- **Pull never overwrites host files by default.** If any planned destination already exists, pull lists the conflicts and exits without copying anything. Re-run with `--overwrite` to proceed; the summary then reports how many files were overwritten.
+- **Deletions are not propagated.** Both commands are additive — a removed file on one side stays put on the other.
+- **`--include` adds extra paths AND cancels matching config excludes** (you own explicit choices).
+- **`--exclude` adds to the effective exclude list.** Patterns are `fnmatch` globs; a `/`-suffixed entry matches that directory name at any depth.
+
+### Typical loop
+
+```bash
+# plan on host (drop a design note into plans/)
+$EDITOR plans/new-feature.md
+
+# ship it to the agent
+python sandbox.py push-context myproject
+
+# ... agent works, may update plans/, drop notes in .claude/, etc. ...
+
+# bring agent-side changes back to the host repo
+python sandbox.py pull-context myproject
+```
+
 ## ◾ Fetch Sandbox
 
 `fetch-sandbox.py` is a standalone script you run from your **host machine** (not inside the container) to pull the agent's work into your real repository. It fetches the requested branch (or PR) directly by URL from the local Gitea instance, runs safety checks and an optional LLM security review, then merges. No git remote is added to your repo.
