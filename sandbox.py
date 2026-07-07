@@ -1224,6 +1224,26 @@ def cmd_webui(args: argparse.Namespace) -> None:
         return
 
 
+def cmd_broker(args: argparse.Namespace) -> None:
+    """Manage the webui broker daemon (start / stop / status / serve / passwd).
+
+    Lazy import: ci-watch.py does `from sandbox import ...` and the CLI's
+    other paths never need the broker module loaded.
+    """
+    from cli import broker
+    action = args.broker_action
+    if action == "start":
+        broker.start()
+    elif action == "stop":
+        broker.stop()
+    elif action == "status":
+        broker.status()
+    elif action == "serve":
+        broker.serve()
+    elif action == "passwd":
+        broker.passwd()
+
+
 # ─── CLI Parser ───────────────────────────────────────────────────────────────
 
 
@@ -1272,6 +1292,18 @@ def build_parser() -> argparse.ArgumentParser:
     webui_import.add_argument("project", nargs="?",
         help="project name (omit to list every agent container)")
     webui.set_defaults(func=cmd_webui)
+
+    # Broker subcommands
+    broker = sub.add_parser("broker", help="Manage the webui broker daemon")
+    broker_sub = broker.add_subparsers(dest="broker_action", required=True)
+    broker_sub.add_parser("start", help="Start the broker daemon (detached)")
+    broker_sub.add_parser("stop", help="Stop the broker daemon")
+    broker_sub.add_parser("status", help="Show broker daemon status")
+    broker_sub.add_parser("serve",
+        help="Run the broker loop in the foreground (what `start` spawns)")
+    broker_sub.add_parser("passwd",
+        help="Set the operator password (must match the webui vault password)")
+    broker.set_defaults(func=cmd_broker)
 
     p = sub.add_parser("create", help="Mirror repo and spin up agent container",
                        parents=[container_flags])

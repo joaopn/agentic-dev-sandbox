@@ -166,6 +166,7 @@ Commands:
   recreate <project> [opts]      New container + fresh volume + fresh token
   status                         List all projects, containers, ports
   destroy <project>              Remove container, volume, Gitea user + repos
+  broker <action>                Manage the webui broker daemon (start|stop|status|serve|passwd)
   logs <project>                 Tail container logs
 
 Standalone script (run from your real repo):

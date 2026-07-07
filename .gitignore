@@ -4,6 +4,7 @@ __pycache__/
 container_volumes/
 .ci-watch/
 /.broker/
+/tests/.scratch/
 plans/
 
 # AI agent local files

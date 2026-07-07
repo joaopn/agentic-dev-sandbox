@@ -1349,7 +1349,19 @@ def create(req: CreateRequest, cfg: Config | None = None, progress=None) -> Crea
         gpus=req.gpus or profile_default_gpus(profile), agent_type=req.agent,
         docker=req.docker, ci_watch=cfg.ci_watch_enabled,
     )
-    run_check(["docker", *docker_args])
+    # NOT run_check: its die() stringifies the full argv, which carries
+    # -e GITEA_TOKEN/SSH_PASSWORD — that text would reach the broker's client
+    # envelope and view log. HarnessError splits the sinks instead: step name
+    # to the durable log, docker's stderr (locally-known secrets masked) to
+    # the client. The CLI prints the same client detail via main()'s handler.
+    r = run(["docker", *docker_args], capture_output=True, text=True)
+    if r.returncode != 0:
+        detail = _scrub_secrets((r.stderr or "").strip(), cfg)
+        for secret in (agent_token, ssh_pass):
+            if secret:
+                detail = detail.replace(secret, "***")
+        raise HarnessError("container start failed",
+                           f"container start failed: {detail}")
 
     # 10. Inject default route through the router
     progress.step("route")
@@ -1416,6 +1428,16 @@ def destroy(req: DestroyRequest, cfg: Config | None = None, progress=None) -> De
     progress.step("cleanup")
     print("Removing agent network...")
     remove_agent_network(project)
+
+    # Drop the project's webport-registry rows (best-effort: a stale row would
+    # make a same-name recreate hit webport_add's duplicate-port rejection).
+    webports = _read_webports()
+    if project in webports:
+        webports.pop(project, None)
+        try:
+            _write_webports(webports)
+        except OSError:
+            pass
 
     progress.step("gitea")
     removed_gitea_user = gitea_api_ok(cfg, "GET", f"/users/{gitea_user}")

@@ -7,6 +7,7 @@
 [◾ `container/` Directory](#-container-directory)
 [◾ Git Remotes Inside the Container](#-git-remotes-inside-the-container)
 [◾ VS Code Remote-SSH](#-vs-code-remote-ssh)
+[◾ WebUI Broker](#-webui-broker)
 [◾ Fetch Sandbox](#-fetch-sandbox)
 [◾ Reviewer](#-reviewer)
 [◾ Repo Watch](#-repo-watch)
@@ -210,6 +211,42 @@ python sandbox.py push-context myproject
 
 # bring agent-side changes back to the host repo
 python sandbox.py pull-context myproject
+```
+
+## ◾ WebUI Broker
+
+The broker is an opt-in host-side daemon that exposes the lifecycle verbs
+(`list`, `status`, `attach`, `start`, `stop`, `sync`, `create`, `destroy`, plus
+the webport-tab registry) over a unix socket, so the webui's management pages
+can drive projects without ever holding a docker socket. With it stopped, the
+CLI-first system is unchanged.
+
+```bash
+python sandbox.py broker passwd   # set the operator password (once)
+python sandbox.py broker start    # start the daemon (detached)
+python sandbox.py broker status
+python sandbox.py broker stop
+```
+
+The password must match the webui vault's master password — one secret unlocks
+the vault and logs into Management. The raw password never transits: clients
+send a derived login proof, and the broker stores an scrypt hash of that proof.
+
+Containment: a closed verb allowlist (never a docker passthrough), a 0600
+socket plus an SO_PEERCRED same-uid check, session tokens required for every
+verb except the `list`/`status` reads, and a fresh password proof (step-up) for
+`destroy`. Everything auth- or write-shaped is appended to an audit log.
+
+State lives in the gitignored `.broker/` directory: `run/` (socket, per-op
+progress logs, `registry/webports.json` — the only subdir the webui will ever
+see), plus host-only full logs, pidfile, daemon log, password hash, and
+`broker-audit.log`.
+
+**After editing any `cli/*.py` file, restart the daemon** — it caches its
+imports and keeps serving the old code silently:
+
+```bash
+python sandbox.py broker stop && python sandbox.py broker start
 ```
 
 ## ◾ Fetch Sandbox
