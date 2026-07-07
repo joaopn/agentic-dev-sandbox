@@ -1194,9 +1194,30 @@ def cmd_webui(args: argparse.Namespace) -> None:
             return
         if container_exists("sandbox-webui"):
             run(["docker", "rm", "-f", "sandbox-webui"], capture_output=True)
+        # SO_PEERCRED contract: the webui container must run as the broker
+        # daemon's uid or every socket call is rejected (the broker logs
+        # `peer reject: uid X != owner Y`). Compose reads these from the env.
+        os.environ["WEBUI_UID"] = str(os.getuid())
+        os.environ["WEBUI_GID"] = str(os.getgid())
+        broker_run = SCRIPT_DIR / ".broker" / "run"
+        broker_run.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.environ["BROKER_RUN_DIR"] = str(broker_run)
         if not run_quiet(["docker", "image", "inspect", "sandbox-webui:latest"]):
             print("Building webui image...")
             docker_compose("--profile", "webui", "build", "webui")
+        if os.getuid() != 1000:
+            # Image chowns /app/tls + /app/state to its baked uid 1000; when
+            # we run as a different uid the named volumes need re-owning or
+            # TLS/state writes EACCES.
+            docker_compose("--profile", "webui", "run", "--rm", "--no-deps",
+                           "--user", "root", "--entrypoint", "chown", "webui",
+                           "-R", f"{os.getuid()}:{os.getgid()}",
+                           "/app/tls", "/app/state")
+        from cli import broker as broker_mod
+        if not broker_mod._running():
+            print("note: broker daemon is not running — management pages will "
+                  "report 'broker unavailable' (terminal tabs still work). "
+                  "Start it with: python3 sandbox.py broker start")
         print(f"Starting webui (bind {bind}:{port})...")
         docker_compose("--profile", "webui", "up", "-d", "webui")
         wire_webui_to_projects()

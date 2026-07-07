@@ -25,12 +25,15 @@ RUN wget -q https://unpkg.com/xterm@${XTERM_VERSION}/lib/xterm.js \
 
 WORKDIR /app
 COPY server.py .
+COPY services.py .
 COPY static/index.html static/
 COPY static/app.js static/
 COPY static/style.css static/
 
+# /app/state must exist in the image BEFORE the chown or the named volume
+# mounted there boots root-owned (compose `user:` runs us unprivileged).
 RUN useradd -m -u 1000 webui \
- && mkdir -p /app/tls \
+ && mkdir -p /app/tls /app/state \
  && chown -R webui:webui /app
 USER webui
 

@@ -322,15 +322,22 @@ def list_agents() -> list[str]:
                   if p.is_dir() and not p.name.startswith("."))
 
 
+def list_profiles() -> list[str]:
+    """Return available image profiles (agent/Dockerfile.* names). The SINGLE
+    enumeration home — the broker's catalog verb and both error paths read
+    this, so the catalog can never advertise a profile create rejects."""
+    return sorted(
+        p.name.removeprefix("Dockerfile.")
+        for p in (SCRIPT_DIR / "agent").glob("Dockerfile.*")
+        if not p.name.endswith(".sh")
+    )
+
+
 def resolve_profile_image(profile: str) -> tuple[str, Path]:
     """Return (image_tag, dockerfile_path) for a given profile name."""
     dockerfile = SCRIPT_DIR / "agent" / f"Dockerfile.{profile}"
     if not dockerfile.exists():
-        available = sorted(
-            p.name.removeprefix("Dockerfile.")
-            for p in (SCRIPT_DIR / "agent").glob("Dockerfile.*")
-            if not p.name.endswith(".sh")
-        )
+        available = list_profiles()
         raise ValidationError(f"Unknown profile '{profile}'. Available: {', '.join(available)}")
     image_tag = f"sandbox-agent-{profile}:latest"
     return image_tag, dockerfile
@@ -1304,11 +1311,7 @@ def create(req: CreateRequest, cfg: Config | None = None, progress=None) -> Crea
     progress.step("build-image")
     profile = req.profile or cfg.default_profile
     if not profile:
-        available = sorted(
-            p.name.removeprefix("Dockerfile.")
-            for p in (SCRIPT_DIR / "agent").glob("Dockerfile.*")
-            if not p.name.endswith(".sh")
-        )
+        available = list_profiles()
         die(f"--profile is required. Available: {', '.join(available)}")
     image, dockerfile = resolve_profile_image(profile)
     if not run_quiet(["docker", "image", "inspect", image]):

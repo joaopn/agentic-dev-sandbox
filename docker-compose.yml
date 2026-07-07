@@ -55,6 +55,9 @@ services:
     build: ./webui
     image: sandbox-webui:latest
     container_name: sandbox-webui
+    # SO_PEERCRED contract: the webui must run as the broker daemon's uid or
+    # every broker call is rejected (`sandbox.py webui start` exports these).
+    user: "${WEBUI_UID:-1000}:${WEBUI_GID:-1000}"
     networks:
       - dev-sandbox
     extra_hosts:
@@ -62,10 +65,16 @@ services:
     environment:
       - WEBUI_BIND=${WEBUI_BIND:-127.0.0.1}
       - WEBUI_GITEA_URL=${WEBUI_GITEA_URL:-http://${WEBUI_BIND:-127.0.0.1}:${GITEA_PORT:-3000}}
+      - SANDBOX_BROKER_SOCKET=/run/broker/broker.sock
     ports:
       - "${WEBUI_BIND:-127.0.0.1}:${WEBUI_PORT:-7777}:7777"
     volumes:
       - webui-tls:/app/tls
+      - webui-state:/app/state
+      # Broker run/ dir, read-only. PARENT-dir mount on purpose: the daemon
+      # recreates the socket inode on restart; a single-file mount would pin
+      # the dead inode. LOCKSTEP: target = SANDBOX_BROKER_SOCKET's parent dir.
+      - ${BROKER_RUN_DIR:-./.broker/run}:/run/broker:ro
     restart: unless-stopped
     profiles: ["webui"]
 
@@ -74,6 +83,7 @@ volumes:
   gitea-data:
   router-rules:
   webui-tls:
+  webui-state:
 
 networks:
   # Infrastructure network: has internet access via Docker gateway.

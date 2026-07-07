@@ -390,8 +390,8 @@ def test_tee_fans_out_and_survives_flush_errors():
 
 def test_verb_tables_shape():
     assert set(broker.VERBS) == {
-        "list", "status", "attach", "start", "stop", "sync", "create",
-        "destroy", "webport_add", "webport_remove", "webport_list"}
+        "list", "status", "catalog", "attach", "start", "stop", "sync",
+        "create", "destroy", "webport_add", "webport_remove", "webport_list"}
     assert broker.OPEN_VERBS == frozenset({"list", "status"})
     assert broker.STEP_UP_VERBS == frozenset({"destroy"})
     assert broker.AUTH_VERBS == frozenset({"login", "logout"})
@@ -417,3 +417,35 @@ def test_progress_verbs_match_core_keys():
     """The broker's op-log verbs are exactly the verbs the core emits
     milestone keys for (the webui checklist lockstep anchor)."""
     assert broker.PROGRESS_VERBS == frozenset(core.PROGRESS_KEYS)
+
+
+# ─── catalog verb ─────────────────────────────────────────────────────────────
+
+
+def test_list_profiles_is_the_single_enumeration():
+    """python/cuda in, helper scripts (.sh) out, sorted — the one home the
+    catalog verb and both error paths read."""
+    profiles = core.list_profiles()
+    assert "python" in profiles and "cuda" in profiles
+    assert not any(p.endswith(".sh") for p in profiles)
+    assert profiles == sorted(profiles)
+
+
+def test_catalog_is_token_gated():
+    reply = broker.dispatch("catalog", {}, None, broker_auth.TokenStore())
+    assert reply["error"]["kind"] == "unauthorized"
+
+
+def test_catalog_contents():
+    """Filesystem enums only (no docker): profiles from agent/Dockerfile.*,
+    agents from INSTALLERS — never list_agents(), which would advertise the
+    installer-less opencode that create rejects."""
+    tokens, token = _tokens_with_session()
+    reply = broker.dispatch("catalog", {}, token, tokens)
+    assert reply["ok"] is True
+    result = reply["result"]
+    assert "python" in result["profiles"] and "cuda" in result["profiles"]
+    assert set(result["agents"]) == set(core.INSTALLERS)
+    assert "claude" in result["agents"] and "goose" in result["agents"]
+    assert "opencode" not in result["agents"]
+    assert result["profiles"] == sorted(result["profiles"])

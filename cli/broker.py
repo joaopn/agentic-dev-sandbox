@@ -260,6 +260,17 @@ def _verb_status(_args: dict, _progress=None) -> dict:
     return dataclasses.asdict(core.status())
 
 
+def _verb_catalog(_args: dict, _progress=None) -> dict:
+    """Create-form enums: image profiles + installable agents. Token-gated
+    (NOT in OPEN_VERBS — deny-by-default), filesystem reads only, no docker.
+    Agents come from INSTALLERS, deliberately NOT list_agents(): a container/
+    dir without an installer (e.g. opencode) would be advertised here and then
+    rejected by CreateRequest — the catalog must only offer what create
+    accepts. Do not "correct" this to list_agents()."""
+    return {"profiles": core.list_profiles(),
+            "agents": sorted(core.INSTALLERS)}
+
+
 def _verb_stop(args: dict, progress=None) -> dict:
     req = core.StopRequest.from_kwargs(**args)   # may raise ValidationError
     return dataclasses.asdict(core.stop(req, progress=progress))
@@ -345,6 +356,7 @@ def _verb_webport_list(args: dict, _progress=None) -> list[dict]:
 VERBS = {
     "list": _verb_list,
     "status": _verb_status,
+    "catalog": _verb_catalog,
     "attach": _verb_attach,
     "start": _verb_start,
     "stop": _verb_stop,
